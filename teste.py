@@ -9,7 +9,6 @@ def formatar_brasileiro(valor):
 
 # Carregar os dados
 @st.cache_data
-
 def load_data():
     df = pd.read_excel("Acompto_Abast.xlsx", sheet_name="BD", skiprows=2)
     df.columns = [
@@ -26,6 +25,7 @@ def load_data():
     df["Qtde_Litros"] = pd.to_numeric(df["Qtde_Litros"], errors="coerce")
     df["Media"] = pd.to_numeric(df["Media"], errors="coerce")
     df["Media_P"] = pd.to_numeric(df["Media_P"], errors="coerce")
+    df["Fazenda"] = df["Ref1"]  # Assumindo que Ref1 representa a fazenda
     return df
 
 df = load_data()
@@ -49,6 +49,9 @@ selected_meses = sorted(df["Mes"].dropna().unique()) if meses_check else st.side
 semanas_check = st.sidebar.checkbox("Todas as Semanas", value=True)
 selected_semanas = sorted(df["Semana"].dropna().unique()) if semanas_check else st.sidebar.multiselect("Semana", options=sorted(df["Semana"].dropna().unique()))
 
+fazendas_check = st.sidebar.checkbox("Todas as Fazendas", value=True)
+selected_fazendas = df["Fazenda"].dropna().unique() if fazendas_check else st.sidebar.multiselect("Fazenda", options=sorted(df["Fazenda"].dropna().unique()))
+
 periodo = st.sidebar.date_input("Período", [df["Data"].min(), df["Data"].max()])
 
 filtro = (
@@ -57,6 +60,7 @@ filtro = (
     df["Ano"].isin(selected_anos) &
     df["Mes"].isin(selected_meses) &
     df["Semana"].isin(selected_semanas) &
+    df["Fazenda"].isin(selected_fazendas) &
     (df["Data"] >= pd.to_datetime(periodo[0])) &
     (df["Data"] <= pd.to_datetime(periodo[1]))
 )
