@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from st_aggrid import AgGrid, GridOptionsBuilder
-import locale
 
-# Definir localização para o formato brasileiro
-locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
+# Função auxiliar para formatação brasileira
+def formatar_brasileiro(valor):
+    return "{:,.2f}".format(valor).replace(",", "X").replace(".", ",").replace("X", ".")
 
 # Carregar os dados
 @st.cache_data
@@ -64,9 +64,18 @@ df_filtrado = df[filtro]
 
 # KPIs
 col1, col2, col3 = st.columns(3)
-col1.metric("Total de Litros Abastecidos", f"{df_filtrado['Qtde_Litros'].sum():,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-col2.metric("Média de Consumo (todos)", f"{df_filtrado['Media'].mean():.2f}".replace('.', ','))
+col1.metric("Total de Litros Abastecidos", formatar_brasileiro(df_filtrado['Qtde_Litros'].sum()))
+col2.metric("Média de Consumo (todos)", formatar_brasileiro(df_filtrado['Media'].mean()))
 col3.metric("Qtd. Equipamentos Únicos", df_filtrado["Cod_Equip"].nunique())
+
+# Alertas: veículos com consumo abaixo de 1.5 ou acima de 5 (exemplo)
+with st.expander("🚨 Alertas de Consumo Fora do Padrão", expanded=True):
+    alertas = df_filtrado[(df_filtrado['Media'] < 1.5) | (df_filtrado['Media'] > 5)]
+    if alertas.empty:
+        st.success("Nenhum veículo com consumo fora do padrão identificado.")
+    else:
+        st.warning(f"{alertas['Cod_Equip'].nunique()} veículos com consumo fora do padrão.")
+        st.dataframe(alertas[["Data", "Cod_Equip", "Classe_Operacional", "Media"]])
 
 # Visão geral interativa
 with st.expander("🔄 Visão Geral por Classe Operacional", expanded=True):
@@ -100,6 +109,12 @@ with st.expander("📅 Consumo Mensal (Barras)", expanded=True):
                      title="Consumo Mensal", labels={"Qtde_Litros": "Litros"})
     fig_mes.update_traces(texttemplate='%{text:.2f}', textposition='outside')
     st.plotly_chart(fig_mes, use_container_width=True)
+
+# Tendência por equipamento
+with st.expander("📉 Tendência de Consumo por Equipamento", expanded=True):
+    tendencia = df_filtrado.groupby(["AnoMes", "Cod_Equip"])["Media"].mean().reset_index()
+    fig_tend = px.line(tendencia, x="AnoMes", y="Media", color="Cod_Equip", title="Tendência de Consumo Médio por Equipamento")
+    st.plotly_chart(fig_tend, use_container_width=True)
 
 # Ranking por Equipamento
 with st.expander("🚜 Ranking de Veículos por Consumo Médio", expanded=True):
