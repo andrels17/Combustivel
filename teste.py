@@ -93,8 +93,9 @@ with st.expander("🚜 Ranking de Veículos por Consumo Médio", expanded=True):
 # 6. Comparativo por Classe Operacional
 with st.expander("📊 Comparativo de Classes Operacionais", expanded=False):
     comparativo = df_filtrado.groupby(["Classe_Operacional", "Cod_Equip"])["Media"].mean().reset_index()
-    fig_comp = px.box(comparativo, x="Classe_Operacional", y="Media",
-                      points="all", title="Distribuição de Média por Classe Operacional")
+    fig_comp = px.box(comparativo, x="Classe_Operacional", y="Media", points="outliers",
+                      title="Boxplot da Média de Consumo por Classe Operacional")
+    fig_comp.update_layout(xaxis_tickangle=-45)
     st.plotly_chart(fig_comp, use_container_width=True)
 
 # 7. Tabela interativa com AgGrid
