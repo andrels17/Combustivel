@@ -16,6 +16,7 @@ def load_data():
     ]
     df = df[pd.to_datetime(df["Data"], errors='coerce').notna()]
     df["Data"] = pd.to_datetime(df["Data"])
+    df["Ano"] = df["Data"].dt.year
     df["AnoMes"] = df["Data"].dt.to_period("M").astype(str)
     df["AnoSemana"] = df["Data"].dt.strftime("%Y-%U")
     df["Qtde_Litros"] = pd.to_numeric(df["Qtde_Litros"], errors="coerce")
@@ -31,11 +32,17 @@ st.title("📊 Dashboard de Consumo de Abastecimentos")
 st.sidebar.header("Filtros")
 classes_op = st.sidebar.multiselect("Classe Operacional", options=df["Classe_Operacional"].dropna().unique(), default=df["Classe_Operacional"].dropna().unique())
 safras = st.sidebar.multiselect("Safra", options=df["Safra"].dropna().unique(), default=df["Safra"].dropna().unique())
+anos = st.sidebar.multiselect("Ano", options=df["Ano"].dropna().unique(), default=df["Ano"].dropna().unique())
+meses = st.sidebar.multiselect("Mês", options=sorted(df["Mes"].dropna().unique()), default=sorted(df["Mes"].dropna().unique()))
+semanas = st.sidebar.multiselect("Semana", options=sorted(df["Semana"].dropna().unique()), default=sorted(df["Semana"].dropna().unique()))
 periodo = st.sidebar.date_input("Período", [df["Data"].min(), df["Data"].max()])
 
 filtro = (
     df["Classe_Operacional"].isin(classes_op) &
     df["Safra"].isin(safras) &
+    df["Ano"].isin(anos) &
+    df["Mes"].isin(meses) &
+    df["Semana"].isin(semanas) &
     (df["Data"] >= pd.to_datetime(periodo[0])) &
     (df["Data"] <= pd.to_datetime(periodo[1]))
 )
@@ -54,7 +61,7 @@ with st.expander("🔄 Visão Geral por Classe Operacional", expanded=True):
                           title="Média de Consumo por Classe Operacional",
                           labels={"Media": "Média (km/l ou equivalente)"})
     fig_media_op.update_traces(texttemplate='%{text:.2f}', textposition='outside')
-    fig_media_op.update_layout(uniformtext_minsize=8, uniformtext_mode='hide')
+    fig_media_op.update_layout(uniformtext_minsize=8, uniformtext_mode='hide', xaxis_tickangle=-45)
     st.plotly_chart(fig_media_op, use_container_width=True)
 
 # 2. Consumo por Classe
@@ -63,7 +70,7 @@ with st.expander("📈 Consumo Total por Classe", expanded=True):
     fig_classe = px.bar(classe_group, x="Classe", y="Qtde_Litros", text="Qtde_Litros",
                         labels={"Qtde_Litros": "Litros Abastecidos"}, title="Consumo Total por Classe")
     fig_classe.update_traces(texttemplate='%{text:.2s}', textposition='outside')
-    fig_classe.update_layout(uniformtext_minsize=8, uniformtext_mode='hide')
+    fig_classe.update_layout(uniformtext_minsize=8, uniformtext_mode='hide', xaxis_tickangle=-45)
     st.plotly_chart(fig_classe, use_container_width=True)
 
 # 3. Consumo Semanal (pizza)
@@ -84,17 +91,17 @@ with st.expander("📅 Consumo Mensal (Barras)", expanded=True):
 with st.expander("🚜 Ranking de Veículos por Consumo Médio", expanded=True):
     ranking_media = df_filtrado.groupby("Cod_Equip")["Media"].mean().reset_index()
     ranking_media = ranking_media.sort_values("Media", ascending=False).head(10)
-    fig_rank = px.bar(ranking_media, x="Media", y="Cod_Equip", orientation="h",
-                      title="Top 10 Veículos mais Econômicos", text="Media")
+    fig_rank = px.bar(ranking_media, x="Cod_Equip", y="Media", text="Media",
+                      title="Top 10 Veículos mais Econômicos")
     fig_rank.update_traces(texttemplate='%{text:.2f}', textposition="outside")
-    fig_rank.update_layout(yaxis=dict(autorange="reversed"))
+    fig_rank.update_layout(xaxis_tickangle=-45)
     st.plotly_chart(fig_rank, use_container_width=True)
 
 # 6. Comparativo por Classe Operacional
-with st.expander("📊 Comparativo de Classes Operacionais", expanded=False):
+with st.expander("📊 Comparativo de Classes Operacionais", expanded=True):
     comparativo = df_filtrado.groupby(["Classe_Operacional", "Cod_Equip"])["Media"].mean().reset_index()
-    fig_comp = px.box(comparativo, x="Classe_Operacional", y="Media", points="outliers",
-                      title="Boxplot da Média de Consumo por Classe Operacional")
+    fig_comp = px.bar(comparativo, x="Classe_Operacional", y="Media", color="Cod_Equip", 
+                      title="Comparativo de Média por Classe Operacional e Equipamento")
     fig_comp.update_layout(xaxis_tickangle=-45)
     st.plotly_chart(fig_comp, use_container_width=True)
 
