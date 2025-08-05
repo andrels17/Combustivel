@@ -7,19 +7,21 @@ from st_aggrid import AgGrid, GridOptionsBuilder
 
 # --------------- Configurações ---------------
 
-EXCEL_PATH  = "Acompto_Abast.xlsx"
-SHEET_NAME   = "BD"
-ALERTA_MIN   = 1.5
-ALERTA_MAX   = 5.0
+EXCEL_PATH = "Acompto_Abast.xlsx"
+SHEET_NAME = "BD"
+ALERTA_MIN = 1.5
+ALERTA_MAX = 5.0
 
 # --------------- Utilitários ---------------
 
 def formatar_brasileiro(valor: float) -> str:
     """Formata número no padrão brasileiro com duas casas decimais."""
-    return "{:,.2f}".format(valor) \
-                   .replace(",", "X") \
-                   .replace(".", ",") \
-                   .replace("X", ".")
+    return (
+        "{:,.2f}".format(valor)
+        .replace(",", "X")
+        .replace(".", ",")
+        .replace("X", ".")
+    )
 
 @st.cache_data(show_spinner=False)
 def load_data(path: str, sheet: str) -> pd.DataFrame:
@@ -50,18 +52,18 @@ def load_data(path: str, sheet: str) -> pd.DataFrame:
     df = df[df["Data"].notna()]
 
     # Extrai mês (1–12) e semana ISO (1–53)
-    df["Mes"]    = df["Data"].dt.month
+    df["Mes"] = df["Data"].dt.month
     df["Semana"] = df["Data"].dt.isocalendar().week
 
     # Períodos auxiliares
-    df["Ano"]       = df["Data"].dt.year
-    df["AnoMes"]    = df["Data"].dt.to_period("M").astype(str)
+    df["Ano"] = df["Data"].dt.year
+    df["AnoMes"] = df["Data"].dt.to_period("M").astype(str)
     df["AnoSemana"] = df["Data"].dt.strftime("%Y-%U")
 
     # Converte colunas numéricas
     df["Qtde_Litros"] = pd.to_numeric(df["Qtde_Litros"], errors="coerce")
-    df["Media"]       = pd.to_numeric(df["Media"], errors="coerce")
-    df["Media_P"]     = pd.to_numeric(df["Media_P"], errors="coerce")
+    df["Media"] = pd.to_numeric(df["Media"], errors="coerce")
+    df["Media_P"] = pd.to_numeric(df["Media_P"], errors="coerce")
 
     # Define Fazenda
     df["Fazenda"] = df["Ref1"].astype(str)
@@ -95,16 +97,15 @@ def sidebar_filters(df: pd.DataFrame) -> dict:
         "Ano", anos_opts, default=[ano_max]
     )
 
-    meses_opts = sorted(df[df["Ano"].isin(sel_anos)]["Mes"].unique())
-    todos_meses = st.sidebar.checkbox("Todos os Meses", value=False)
-    sel_meses   = meses_opts if todos_meses else st.sidebar.multiselect(
+    meses_opts   = sorted(df[df["Ano"].isin(sel_anos)]["Mes"].unique())
+    todos_meses  = st.sidebar.checkbox("Todos os Meses", value=False)
+    sel_meses    = meses_opts if todos_meses else st.sidebar.multiselect(
         "Mês", meses_opts, default=[mes_max]
     )
 
-    semanas_opts = sorted(df[
-        (df["Ano"].isin(sel_anos)) &
-        (df["Mes"].isin(sel_meses))
-    ]["Semana"].unique())
+    semanas_opts  = sorted(
+        df[(df["Ano"].isin(sel_anos)) & (df["Mes"].isin(sel_meses))]["Semana"].unique()
+    )
     todos_semanas = st.sidebar.checkbox("Todas as Semanas", value=False)
     sel_semanas   = semanas_opts if todos_semanas else st.sidebar.multiselect(
         "Semana", semanas_opts, default=[semana_max]
@@ -122,24 +123,24 @@ def sidebar_filters(df: pd.DataFrame) -> dict:
     sel_periodo    = st.sidebar.date_input("Período", [dt_min, dt_max])
 
     return {
-        "safras":      sel_safras,
-        "anos":        sel_anos,
-        "meses":       sel_meses,
-        "semanas":     sel_semanas,
-        "classes_op":  sel_classes,
-        "periodo":     sel_periodo
+        "safras":     sel_safras,
+        "anos":       sel_anos,
+        "meses":      sel_meses,
+        "semanas":    sel_semanas,
+        "classes_op": sel_classes,
+        "periodo":    sel_periodo
     }
 
 def filtrar_dados(df: pd.DataFrame, opts: dict) -> pd.DataFrame:
     """Aplica todos os filtros no DataFrame e retorna o subset."""
     mask = (
-        df["Safra"].isin(opts["safras"]) &
-        df["Ano"].isin(opts["anos"]) &
-        df["Mes"].isin(opts["meses"]) &
-        df["Semana"].isin(opts["semanas"]) &
-        df["Classe_Operacional"].isin(opts["classes_op"]) &
-        (df["Data"] >= pd.to_datetime(opts["periodo"][0])) &
-        (df["Data"] <= pd.to_datetime(opts["periodo"][1]))
+        df["Safra"].isin(opts["safras"])
+        & df["Ano"].isin(opts["anos"])
+        & df["Mes"].isin(opts["meses"])
+        & df["Semana"].isin(opts["semanas"])
+        & df["Classe_Operacional"].isin(opts["classes_op"])
+        & (df["Data"] >= pd.to_datetime(opts["periodo"][0]))
+        & (df["Data"] <= pd.to_datetime(opts["periodo"][1]))
     )
     return df.loc[mask].copy()
 
@@ -153,18 +154,15 @@ def calcular_kpis(df: pd.DataFrame) -> dict:
 
     # Período anterior (mesmo intervalo)
     inicio, fim = df["Data"].min(), df["Data"].max()
-    delta       = fim - inicio
-    prev        = df[
-        (df["Data"] >= inicio - delta) &
-        (df["Data"] < inicio)
-    ]
+    delta = fim - inicio
+    prev = df[(df["Data"] >= inicio - delta) & (df["Data"] < inicio)]
     prev_litros = prev["Qtde_Litros"].sum() or 1
-    delta_pct   = (total_litros - prev_litros) / prev_litros * 100
+    delta_pct = (total_litros - prev_litros) / prev_litros * 100
 
     return {
-        "total_litros":    total_litros,
-        "media_consumo":   media_consumo,
-        "eqp_unicos":      eqp_unicos,
+        "total_litros":     total_litros,
+        "media_consumo":    media_consumo,
+        "eqp_unicos":       eqp_unicos,
         "delta_litros_pct": delta_pct
     }
 
@@ -202,7 +200,9 @@ def main():
 
     # 3) Alertas
     with st.expander("🚨 Alertas de Consumo Fora do Padrão", expanded=True):
-        fora = df_f[(df_f["Media"] < ALERTA_MIN) | (df_f["Media"] > ALERTA_MAX)]
+        fora = df_f[
+            (df_f["Media"] < ALERTA_MIN) | (df_f["Media"] > ALERTA_MAX)
+        ]
         if fora.empty:
             st.success("Nenhum consumo fora do padrão.")
         else:
@@ -212,10 +212,16 @@ def main():
     st.markdown("---")
 
     # 4.1) Média por Classe Operacional
-    media_op = df_f.groupby("Classe_Operacional")["Media"] \
-                   .mean().reset_index()
+    media_op = (
+        df_f.groupby("Classe_Operacional")["Media"]
+        .mean()
+        .reset_index()
+    )
     fig1 = px.bar(
-        media_op, x="Classe_Operacional", y="Media", text="Media",
+        media_op,
+        x="Classe_Operacional",
+        y="Media",
+        text="Media",
         title="Média de Consumo por Classe Operacional",
         labels={"Media": "km/l ou equiv."}
     )
@@ -224,12 +230,18 @@ def main():
     st.plotly_chart(fig1, use_container_width=True)
 
     # 4.2) Consumo Mensal vs Média (dropdown)
-    agg = df_f.groupby("AnoMes")[["Qtde_Litros", "Media"]].mean() \
-              .reset_index()
+    agg = (
+        df_f.groupby("AnoMes")[["Qtde_Litros", "Media"]]
+        .mean()
+        .reset_index()
+    )
     agg["AnoMes"] = agg["AnoMes"].astype(str)
 
     fig2 = px.bar(
-        agg, x="AnoMes", y="Qtde_Litros", text="Qtde_Litros",
+        agg,
+        x="AnoMes",
+        y="Qtde_Litros",
+        text="Qtde_Litros",
         title="Consumo Mensal / Média",
         labels={"Qtde_Litros": "Litros", "AnoMes": "Período"}
     )
@@ -244,14 +256,16 @@ def main():
         updatemenus=[{
             "buttons": [
                 {
-                    "label": "Litros", "method": "update",
+                    "label": "Litros",
+                    "method": "update",
                     "args": [
                         {"y": ["Qtde_Litros"]},
                         {"yaxis": {"title": "Litros"}}
                     ]
                 },
                 {
-                    "label": "Média", "method": "update",
+                    "label": "Média",
+                    "method": "update",
                     "args": [
                         {"y": ["Media"]},
                         {"yaxis": {"title": "Média (km/l)"}}
@@ -263,15 +277,18 @@ def main():
     )
     st.plotly_chart(fig2, use_container_width=True)
 
-    # 4.3) Consumo Mensal (Top 10 Equipamentos) em barras agrupadas
+    # 4.3) Consumo Mensal (Top 10 Equipamentos)
     top10 = (
         df_f.groupby("Cod_Equip")["Qtde_Litros"]
-           .sum().nlargest(10).index
+        .sum()
+        .nlargest(10)
+        .index
     )
     trend = (
         df_f[df_f["Cod_Equip"].isin(top10)]
-            .groupby(["AnoMes", "Cod_Equip"])["Media"]
-            .mean().reset_index()
+        .groupby(["AnoMes", "Cod_Equip"])["Media"]
+        .mean()
+        .reset_index()
     )
     trend["AnoMes"] = trend["AnoMes"].astype(str)
 
@@ -322,3 +339,6 @@ def main():
             file_name="dados_filtrados.csv",
             mime="text/csv"
         )
+
+if __name__ == "__main__":
+    main()
