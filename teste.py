@@ -66,47 +66,46 @@ with st.expander("📈 Consumo Total por Classe", expanded=True):
     fig_classe.update_layout(uniformtext_minsize=8, uniformtext_mode='hide')
     st.plotly_chart(fig_classe, use_container_width=True)
 
-# 3. Consumo Semanal
-with st.expander("🗓️ Consumo Semanal", expanded=True):
+# 3. Consumo Semanal (pizza)
+with st.expander("🗓️ Consumo Semanal (Pizza)", expanded=True):
     semana_group = df_filtrado.groupby("AnoSemana")["Qtde_Litros"].sum().reset_index()
-    media_semanal = semana_group["Qtde_Litros"].mean()
-    fig_semana = px.line(semana_group, x="AnoSemana", y="Qtde_Litros", markers=True,
-                         labels={"Qtde_Litros": "Litros"}, title="Consumo Semanal")
-    fig_semana.add_scatter(x=semana_group["AnoSemana"], y=[media_semanal]*len(semana_group),
-                           mode="lines", name="Média")
+    fig_semana = px.pie(semana_group, names="AnoSemana", values="Qtde_Litros", title="Distribuição de Consumo Semanal")
     st.plotly_chart(fig_semana, use_container_width=True)
-    st.metric("Média Semanal", f"{media_semanal:.2f} litros")
 
-# 4. Consumo Mensal
-with st.expander("📅 Consumo Mensal", expanded=True):
+# 4. Consumo Mensal (barras)
+with st.expander("📅 Consumo Mensal (Barras)", expanded=True):
     mes_group = df_filtrado.groupby("AnoMes")["Qtde_Litros"].sum().reset_index()
-    media_mensal = mes_group["Qtde_Litros"].mean()
-    fig_mes = px.line(mes_group, x="AnoMes", y="Qtde_Litros", markers=True,
-                      labels={"Qtde_Litros": "Litros"}, title="Consumo Mensal")
-    fig_mes.add_scatter(x=mes_group["AnoMes"], y=[media_mensal]*len(mes_group),
-                        mode="lines", name="Média")
+    fig_mes = px.bar(mes_group, x="AnoMes", y="Qtde_Litros", text="Qtde_Litros",
+                     title="Consumo Mensal", labels={"Qtde_Litros": "Litros"})
+    fig_mes.update_traces(texttemplate='%{text:.2s}', textposition='outside')
     st.plotly_chart(fig_mes, use_container_width=True)
-    st.metric("Média Mensal", f"{media_mensal:.2f} litros")
 
 # 5. Ranking por Equipamento
-with st.expander("🚜 Ranking de Veículos por Consumo Médio", expanded=False):
-    ranking_media = df_filtrado.groupby(["Cod_Equip", "Descricao_Equip"])["Media"].mean().reset_index()
+with st.expander("🚜 Ranking de Veículos por Consumo Médio", expanded=True):
+    ranking_media = df_filtrado.groupby("Cod_Equip")["Media"].mean().reset_index()
     ranking_media = ranking_media.sort_values("Media", ascending=False).head(10)
-    fig_rank = px.bar(ranking_media, x="Media", y="Descricao_Equip", orientation="h",
+    fig_rank = px.bar(ranking_media, x="Media", y="Cod_Equip", orientation="h",
                       title="Top 10 Veículos mais Econômicos", text="Media")
     fig_rank.update_traces(texttemplate='%{text:.2f}', textposition="outside")
     fig_rank.update_layout(yaxis=dict(autorange="reversed"))
     st.plotly_chart(fig_rank, use_container_width=True)
 
-# 6. Tabela interativa com AgGrid
+# 6. Comparativo por Classe Operacional
+with st.expander("📊 Comparativo de Classes Operacionais", expanded=False):
+    comparativo = df_filtrado.groupby(["Classe_Operacional", "Cod_Equip"])["Media"].mean().reset_index()
+    fig_comp = px.box(comparativo, x="Classe_Operacional", y="Media",
+                      points="all", title="Distribuição de Média por Classe Operacional")
+    st.plotly_chart(fig_comp, use_container_width=True)
+
+# 7. Tabela interativa com AgGrid
 with st.expander("📋 Tabela Detalhada com Filtros", expanded=False):
     gb = GridOptionsBuilder.from_dataframe(df_filtrado)
     gb.configure_pagination()
     gb.configure_default_column(filterable=True, sortable=True, resizable=True)
     grid_options = gb.build()
-    AgGrid(df_filtrado, gridOptions=grid_options, enable_enterprise_modules=True, height=400)
+    AgGrid(df_filtrado.drop(columns=["Descricao_Equip"]), gridOptions=grid_options, enable_enterprise_modules=True, height=400)
 
-# 7. Exportação de dados
+# 8. Exportação de dados
 with st.expander("⬇️ Exportar Dados", expanded=False):
     csv = df_filtrado.to_csv(index=False).encode("utf-8")
     st.download_button("📥 Baixar CSV", data=csv, file_name="dados_filtrados.csv", mime="text/csv")
