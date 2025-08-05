@@ -118,11 +118,29 @@ with st.expander("📉 Tendência de Consumo por Equipamento", expanded=True):
 
 # Ranking por Equipamento
 with st.expander("🚜 Ranking de Veículos por Consumo Médio", expanded=True):
-    ranking_media = df_filtrado.groupby("Cod_Equip")["Media"].mean().reset_index()
+    # Agrupar por código e descrição
+    ranking_media = df_filtrado.groupby(["Cod_Equip", "Descricao_Equip"])["Media"].mean().reset_index()
+
+    # Ordenar pela média decrescente e pegar o Top 10
     ranking_media = ranking_media.sort_values("Media", ascending=False).head(10)
-    fig_rank = px.bar(ranking_media, x="Cod_Equip", y="Media", text="Media",
-                      title="Top 10 Veículos mais Econômicos")
+
+    # Criar rótulo combinando código e descrição
+    ranking_media["Label"] = ranking_media["Cod_Equip"].astype(str) + " - " + ranking_media["Descricao_Equip"]
+
+    # Criar gráfico
+    fig_rank = px.bar(
+        ranking_media,
+        x="Label",
+        y="Media",
+        text="Media",
+        title="Top 10 Veículos mais Econômicos",
+        labels={"Media": "Média de Consumo"}
+    )
+
+    # Formatando texto no gráfico
     fig_rank.update_traces(texttemplate='%{text:.2f}', textposition="outside")
+
+    # Ajustes visuais
     fig_rank.update_layout(xaxis_tickangle=-45)
     st.plotly_chart(fig_rank, use_container_width=True)
 
