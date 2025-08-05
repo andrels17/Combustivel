@@ -263,63 +263,65 @@ def main():
     )
     st.plotly_chart(fig2, use_container_width=True)
 
-# 4.3) Consumo Mensal (Top 10 Equipamentos) em barras agrupadas
-#   - agrupa por AnoMes e Cod_Equip, calcula média
-top10 = (
-    df_f.groupby("Cod_Equip")["Qtde_Litros"]
-    .sum().nlargest(10).index
-)
-trend = (
-    df_f[df_f["Cod_Equip"].isin(top10)]
-    .groupby(["AnoMes", "Cod_Equip"])["Media"]
-    .mean()
-    .reset_index()
-)
-# garantir string limpa
-trend["AnoMes"] = trend["AnoMes"].astype(str)
+def main():
+    # ... outras seções (KPIs, gráficos, etc.) ...
 
-fig3 = px.bar(
-    trend,
-    x="AnoMes",
-    y="Media",
-    color="Cod_Equip",
-    barmode="group",
-    title="Média de Consumo por Período (Top 10 Equip.)",
-    labels={
-        "AnoMes": "Período",
-        "Media": "Média de Consumo",
-        "Cod_Equip": "Equipamento"
-    }
-)
+    # 4.3) Consumo Mensal (Top 10 Equipamentos) em barras agrupadas
+    top10 = (
+        df_f.groupby("Cod_Equip")["Qtde_Litros"]
+           .sum().nlargest(10).index
+    )
+    trend = (
+        df_f[df_f["Cod_Equip"].isin(top10)]
+            .groupby(["AnoMes", "Cod_Equip"])["Media"]
+            .mean().reset_index()
+    )
+    trend["AnoMes"] = trend["AnoMes"].astype(str)
 
-# formatar eixo X como categorias, sem carimbo de hora
-fig3.update_layout(
-    xaxis=dict(
-        tickmode="array",
-        tickvals=trend["AnoMes"].unique(),
-        ticktext=trend["AnoMes"].unique(),
-        tickangle=-45
-    ),
-    legend_title_text="Equipamentos",
-    margin=dict(l=20, r=20, t=50, b=50)
-)
+    fig3 = px.bar(
+        trend,
+        x="AnoMes",
+        y="Media",
+        color="Cod_Equip",
+        barmode="group",
+        title="Média de Consumo por Período (Top 10 Equip.)",
+        labels={
+            "AnoMes": "Período",
+            "Media": "Média de Consumo",
+            "Cod_Equip": "Equipamento"
+        }
+    )
+    fig3.update_layout(
+        xaxis=dict(
+            tickmode="array",
+            tickvals=trend["AnoMes"].unique(),
+            ticktext=trend["AnoMes"].unique(),
+            tickangle=-45
+        ),
+        legend_title_text="Equipamentos",
+        margin=dict(l=20, r=20, t=50, b=50)
+    )
+    st.plotly_chart(fig3, use_container_width=True)
 
-st.plotly_chart(fig3, use_container_width=True)
+    st.markdown("---")
 
     # 5) Tabela detalhada com AgGrid
     with st.expander("📋 Tabela Interativa", expanded=False):
         gb = GridOptionsBuilder.from_dataframe(df_f)
         gb.configure_default_column(filterable=True, sortable=True, resizable=True)
         gb.configure_pagination(paginationAutoPageSize=True)
-        AgGrid(df_f.drop(columns=["Descricao_Equip"]), gb.build(), height=400)
+        AgGrid(
+            df_f.drop(columns=["Descricao_Equip"]),
+            gridOptions=gb.build(),
+            height=400
+        )
 
     # 6) Exportar CSV
     with st.expander("⬇️ Exportar Dados", expanded=False):
         csv = df_f.to_csv(index=False).encode("utf-8")
         st.download_button(
-            "📥 Baixar CSV", data=csv,
-            file_name="dados_filtrados.csv", mime="text/csv"
+            "📥 Baixar CSV",
+            data=csv,
+            file_name="dados_filtrados.csv",
+            mime="text/csv"
         )
-
-if __name__ == "__main__":
-    main()
