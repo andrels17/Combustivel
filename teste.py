@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from st_aggrid import AgGrid, GridOptionsBuilder
 
 # Carregar os dados
 @st.cache_data
@@ -29,10 +30,22 @@ st.title("📊 Dashboard de Consumo de Abastecimentos")
 # Filtros
 st.sidebar.header("Filtros")
 classes_op = st.sidebar.multiselect("Classe Operacional", options=df["Classe_Operacional"].dropna().unique(), default=df["Classe_Operacional"].dropna().unique())
+safras = st.sidebar.multiselect("Safra", options=df["Safra"].dropna().unique(), default=df["Safra"].dropna().unique())
 periodo = st.sidebar.date_input("Período", [df["Data"].min(), df["Data"].max()])
 
-filtro = (df["Classe_Operacional"].isin(classes_op)) & (df["Data"] >= pd.to_datetime(periodo[0])) & (df["Data"] <= pd.to_datetime(periodo[1]))
+filtro = (
+    df["Classe_Operacional"].isin(classes_op) &
+    df["Safra"].isin(safras) &
+    (df["Data"] >= pd.to_datetime(periodo[0])) &
+    (df["Data"] <= pd.to_datetime(periodo[1]))
+)
 df_filtrado = df[filtro]
+
+# KPIs
+col1, col2, col3 = st.columns(3)
+col1.metric("Total de Litros Abastecidos", f"{df_filtrado['Qtde_Litros'].sum():,.2f} L")
+col2.metric("Média de Consumo (todos)", f"{df_filtrado['Media'].mean():.2f} km/L")
+col3.metric("Qtd. Equipamentos Únicos", df_filtrado["Cod_Equip"].nunique())
 
 # Visão geral interativa
 with st.expander("🔄 Visão Geral por Classe Operacional", expanded=True):
@@ -74,3 +87,26 @@ with st.expander("📅 Consumo Mensal", expanded=True):
                         mode="lines", name="Média")
     st.plotly_chart(fig_mes, use_container_width=True)
     st.metric("Média Mensal", f"{media_mensal:.2f} litros")
+
+# 5. Ranking por Equipamento
+with st.expander("🚜 Ranking de Veículos por Consumo Médio", expanded=False):
+    ranking_media = df_filtrado.groupby(["Cod_Equip", "Descricao_Equip"])["Media"].mean().reset_index()
+    ranking_media = ranking_media.sort_values("Media", ascending=False).head(10)
+    fig_rank = px.bar(ranking_media, x="Media", y="Descricao_Equip", orientation="h",
+                      title="Top 10 Veículos mais Econômicos", text="Media")
+    fig_rank.update_traces(texttemplate='%{text:.2f}', textposition="outside")
+    fig_rank.update_layout(yaxis=dict(autorange="reversed"))
+    st.plotly_chart(fig_rank, use_container_width=True)
+
+# 6. Tabela interativa com AgGrid
+with st.expander("📋 Tabela Detalhada com Filtros", expanded=False):
+    gb = GridOptionsBuilder.from_dataframe(df_filtrado)
+    gb.configure_pagination()
+    gb.configure_default_column(filterable=True, sortable=True, resizable=True)
+    grid_options = gb.build()
+    AgGrid(df_filtrado, gridOptions=grid_options, enable_enterprise_modules=True, height=400)
+
+# 7. Exportação de dados
+with st.expander("⬇️ Exportar Dados", expanded=False):
+    csv = df_filtrado.to_csv(index=False).encode("utf-8")
+    st.download_button("📥 Baixar CSV", data=csv, file_name="dados_filtrados.csv", mime="text/csv")
