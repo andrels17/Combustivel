@@ -263,21 +263,48 @@ def main():
     )
     st.plotly_chart(fig2, use_container_width=True)
 
-    # 4.3) Tendência Top 10 Equipamentos
-    top10 = df_f.groupby("Cod_Equip")["Qtde_Litros"] \
-                .sum().nlargest(10).index
-    trend = df_f[df_f["Cod_Equip"].isin(top10)] \
-            .groupby(["AnoMes", "Cod_Equip"])["Media"] \
-            .mean().reset_index()
-    fig3 = px.line(
-        trend, x="AnoMes", y="Media", color="Cod_Equip", markers=True,
-        title="Tendência de Consumo (Top 10 Equip.)",
-        labels={"Media": "Média de Consumo"}
-    )
-    fig3.update_layout(xaxis_tickangle=-45, hovermode="x unified")
-    st.plotly_chart(fig3, use_container_width=True)
+# 4.3) Consumo Mensal (Top 10 Equipamentos) em barras agrupadas
+#   - agrupa por AnoMes e Cod_Equip, calcula média
+top10 = (
+    df_f.groupby("Cod_Equip")["Qtde_Litros"]
+    .sum().nlargest(10).index
+)
+trend = (
+    df_f[df_f["Cod_Equip"].isin(top10)]
+    .groupby(["AnoMes", "Cod_Equip"])["Media"]
+    .mean()
+    .reset_index()
+)
+# garantir string limpa
+trend["AnoMes"] = trend["AnoMes"].astype(str)
 
-    st.markdown("---")
+fig3 = px.bar(
+    trend,
+    x="AnoMes",
+    y="Media",
+    color="Cod_Equip",
+    barmode="group",
+    title="Média de Consumo por Período (Top 10 Equip.)",
+    labels={
+        "AnoMes": "Período",
+        "Media": "Média de Consumo",
+        "Cod_Equip": "Equipamento"
+    }
+)
+
+# formatar eixo X como categorias, sem carimbo de hora
+fig3.update_layout(
+    xaxis=dict(
+        tickmode="array",
+        tickvals=trend["AnoMes"].unique(),
+        ticktext=trend["AnoMes"].unique(),
+        tickangle=-45
+    ),
+    legend_title_text="Equipamentos",
+    margin=dict(l=20, r=20, t=50, b=50)
+)
+
+st.plotly_chart(fig3, use_container_width=True)
 
     # 5) Tabela detalhada com AgGrid
     with st.expander("📋 Tabela Interativa", expanded=False):
