@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -80,35 +81,39 @@ col3.metric("Qtd. Equipamentos Únicos", df_filtrado["Cod_Equip"].nunique())
 with st.expander("🚨 Alertas de Consumo Fora do Padrão", expanded=True):
     alertas = df_filtrado[(df_filtrado['Media'] < 1.5) | (df_filtrado['Media'] > 5)]
     if alertas.empty:
-        st.success("Nenhum veículo com consumo fora do padrão identificado.")
-    else:
-        st.warning(f"{alertas['Cod_Equip'].nunique()} veículos com consumo fora do padrão.")
-        st.dataframe(alertas[["Data", "Cod_Equip", "Classe_Operacional", "Media"]])
-
-# Tendência por equipamento (melhorada com Nome Mês)
+# Tendência por equipamento
 with st.expander("📉 Tendência de Consumo por Equipamento", expanded=True):
-    tendencia = df_filtrado.groupby(["AnoMesLabel", "Cod_Equip"])["Media"].mean().reset_index()
-    fig_tend = px.line(tendencia, x="AnoMesLabel", y="Media", color="Cod_Equip",
-                       title="Tendência de Consumo Médio por Equipamento")
-    fig_tend.update_layout(xaxis_title="Mês", yaxis_title="Média de Consumo")
+    tendencia = df_filtrado.groupby(["AnoMes", "Equipamento_Label"])["Media"].mean().reset_index()
+    fig_tend = px.line(tendencia, x="AnoMes", y="Media", color="Equipamento_Label", title="Tendência de Consumo Médio por Equipamento")
     st.plotly_chart(fig_tend, use_container_width=True)
 
-# Ranking por Equipamento (com Cod_Equip claro no eixo X)
+# Ranking por Equipamento
 with st.expander("🚜 Ranking de Veículos por Consumo Médio", expanded=True):
-    ranking_media = df_filtrado.groupby("Cod_Equip")["Media"].mean().reset_index()
+    ranking_media = df_filtrado.groupby("Equipamento_Label")["Media"].mean().reset_index()
     ranking_media = ranking_media.sort_values("Media", ascending=False).head(10)
-    fig_rank = px.bar(ranking_media, x="Cod_Equip", y="Media", text="Media",
+    fig_rank = px.bar(ranking_media, x="Equipamento_Label", y="Media", text="Media",
                       title="Top 10 Veículos mais Econômicos")
     fig_rank.update_traces(texttemplate='%{text:.2f}', textposition="outside")
-    fig_rank.update_layout(xaxis_title="Código do Equipamento", xaxis_tickangle=-45)
+    fig_rank.update_layout(xaxis_tickangle=-45)
     st.plotly_chart(fig_rank, use_container_width=True)
 
-# Comparativo por Ano
-with st.expander("🧾 Comparativo de Consumo Total por Ano", expanded=True):
-    consumo_ano = df_filtrado.groupby("Ano")["Qtde_Litros"].sum().reset_index()
-    fig_ano = px.bar(consumo_ano, x="Ano", y="Qtde_Litros", text="Qtde_Litros",
-                     labels={"Qtde_Litros": "Litros Abastecidos"}, title="Consumo Total por Ano")
-    fig_ano.update_traces(texttemplate='%{text:.2f}', textposition='outside')
-    st.plotly_chart(fig_ano, use_container_width=True)
+# Comparativo por Classe Operacional
+with st.expander("📊 Comparativo de Classes Operacionais", expanded=True):
+    comparativo = df_filtrado.groupby(["Classe_Operacional", "Equipamento_Label"])["Media"].mean().reset_index()
+    fig_comp = px.bar(comparativo, x="Classe_Operacional", y="Media", color="Equipamento_Label", 
+                      title="Comparativo de Média por Classe Operacional e Equipamento")
+    fig_comp.update_layout(xaxis_tickangle=-45)
+    st.plotly_chart(fig_comp, use_container_width=True)
 
-# Os demais gráficos continuam os mesmos...
+# Tabela interativa com AgGrid
+with st.expander("📋 Tabela Detalhada com Filtros", expanded=False):
+    gb = GridOptionsBuilder.from_dataframe(df_filtrado)
+    gb.configure_pagination()
+    gb.configure_default_column(filterable=True, sortable=True, resizable=True)
+    grid_options = gb.build()
+    AgGrid(df_filtrado.drop(columns=["Descricao_Equip"]), gridOptions=grid_options, enable_enterprise_modules=True, height=400)
+
+# Exportação de dados
+with st.expander("⬇️ Exportar Dados", expanded=False):
+    csv = df_filtrado.to_csv(index=False).encode("utf-8")
+    st.download_button("📥 Baixar CSV", data=csv, file_name="dados_filtrados.csv", mime="text/csv")
