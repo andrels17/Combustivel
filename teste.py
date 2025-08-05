@@ -32,35 +32,49 @@ df = load_data()
 
 st.title("📊 Dashboard de Consumo de Abastecimentos")
 
-# Filtros
+# Filtros com seleção automática dos valores mais recentes
 st.sidebar.header("Filtros")
+
+# Buscar valores mais recentes
+ano_mais_recente = df["Ano"].max()
+mes_mais_recente = df[df["Ano"] == ano_mais_recente]["Mes"].max()
+semana_mais_recente = df[df["Ano"] == ano_mais_recente]["Semana"].max()
+safra_mais_recente = sorted(df["Safra"].dropna().unique())[-1]
+
 classes_op = st.sidebar.checkbox("Todas as Classes Operacionais", value=True)
-selected_classes_op = df["Classe_Operacional"].dropna().unique() if classes_op else st.sidebar.multiselect("Classe Operacional", options=df["Classe_Operacional"].dropna().unique())
+selected_classes_op = df["Classe_Operacional"].dropna().unique() if classes_op else st.sidebar.multiselect(
+    "Classe Operacional", options=df["Classe_Operacional"].dropna().unique()
+)
 
-safras_check = st.sidebar.checkbox("Todas as Safras", value=True)
-selected_safras = df["Safra"].dropna().unique() if safras_check else st.sidebar.multiselect("Safra", options=df["Safra"].dropna().unique())
+safras_check = st.sidebar.checkbox("Todas as Safras", value=False)
+selected_safras = df["Safra"].dropna().unique() if safras_check else st.sidebar.multiselect(
+    "Safra", options=sorted(df["Safra"].dropna().unique()), default=[safra_mais_recente]
+)
 
-anos_check = st.sidebar.checkbox("Todos os Anos", value=True)
-selected_anos = df["Ano"].dropna().unique() if anos_check else st.sidebar.multiselect("Ano", options=df["Ano"].dropna().unique())
+anos_check = st.sidebar.checkbox("Todos os Anos", value=False)
+selected_anos = df["Ano"].dropna().unique() if anos_check else st.sidebar.multiselect(
+    "Ano", options=sorted(df["Ano"].dropna().unique()), default=[ano_mais_recente]
+)
 
-meses_check = st.sidebar.checkbox("Todos os Meses", value=True)
-selected_meses = sorted(df["Mes"].dropna().unique()) if meses_check else st.sidebar.multiselect("Mês", options=sorted(df["Mes"].dropna().unique()))
+meses_check = st.sidebar.checkbox("Todos os Meses", value=False)
+selected_meses = sorted(df["Mes"].dropna().unique()) if meses_check else st.sidebar.multiselect(
+    "Mês", options=sorted(df["Mes"].dropna().unique()), default=[mes_mais_recente]
+)
 
-semanas_check = st.sidebar.checkbox("Todas as Semanas", value=True)
-selected_semanas = sorted(df["Semana"].dropna().unique()) if semanas_check else st.sidebar.multiselect("Semana", options=sorted(df["Semana"].dropna().unique()))
-
-fazendas_check = st.sidebar.checkbox("Todas as Fazendas", value=True)
-selected_fazendas = df["Fazenda"].dropna().unique() if fazendas_check else st.sidebar.multiselect("Fazenda", options=sorted(df["Fazenda"].dropna().unique()))
+semanas_check = st.sidebar.checkbox("Todas as Semanas", value=False)
+selected_semanas = sorted(df["Semana"].dropna().unique()) if semanas_check else st.sidebar.multiselect(
+    "Semana", options=sorted(df["Semana"].dropna().unique()), default=[semana_mais_recente]
+)
 
 periodo = st.sidebar.date_input("Período", [df["Data"].min(), df["Data"].max()])
 
+# Aplicar filtros
 filtro = (
     df["Classe_Operacional"].isin(selected_classes_op) &
     df["Safra"].isin(selected_safras) &
     df["Ano"].isin(selected_anos) &
     df["Mes"].isin(selected_meses) &
     df["Semana"].isin(selected_semanas) &
-    df["Fazenda"].isin(selected_fazendas) &
     (df["Data"] >= pd.to_datetime(periodo[0])) &
     (df["Data"] <= pd.to_datetime(periodo[1]))
 )
