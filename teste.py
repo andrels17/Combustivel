@@ -114,22 +114,49 @@ with st.expander("📅 Consumo Mensal (Barras)", expanded=True):
     fig_mes.update_traces(texttemplate='%{text:.2f}', textposition='outside')
     st.plotly_chart(fig_mes, use_container_width=True)
 
-# Tendência por equipamento com rótulos personalizados
-with st.expander("📊 Tendência de Consumo por Equipamento (Heatmap)", expanded=True):
-    tendencia = df_filtrado.groupby(["AnoMes", "Cod_Equip"])["Media"].mean().reset_index()
-    tendencia_pivot = tendencia.pivot(index="Cod_Equip", columns="AnoMes", values="Media")
+# Tendência de Consumo por Equipamento (Top 10 em Litros)
+with st.expander("📊 Tendência de Consumo por Equipamento (Top 10)", expanded=True):
+    if df_filtrado.empty:
+        st.info("Nenhum dado disponível para o período e filtros selecionados.")
+    else:
+        # Identificar os 10 equipamentos com maior consumo total
+        top10_equipamentos = (
+            df_filtrado.groupby("Cod_Equip")["Qtde_Litros"]
+            .sum()
+            .sort_values(ascending=False)
+            .head(10)
+            .index
+        )
 
-    fig_heatmap = px.imshow(
-        tendencia_pivot,
-        aspect="auto",
-        color_continuous_scale="Viridis",
-        labels=dict(x="Ano/Mês", y="Código do Equipamento", color="Média de Consumo"),
-        title="Média de Consumo por Equipamento ao Longo do Tempo"
-    )
+        # Filtrar apenas os dados desses equipamentos
+        df_top10 = df_filtrado[df_filtrado["Cod_Equip"].isin(top10_equipamentos)]
 
-    st.plotly_chart(fig_heatmap, use_container_width=True)
+        # Agrupar média mensal por equipamento
+        tendencia = df_top10.groupby(["AnoMes", "Cod_Equip"])["Media"].mean().reset_index()
 
+        # Criar gráfico de linha
+        fig_linha = px.line(
+            tendencia,
+            x="AnoMes",
+            y="Media",
+            color="Cod_Equip",
+            markers=True,
+            title="Tendência de Consumo por Equipamento (Top 10 em Litros)",
+            labels={
+                "AnoMes": "Ano/Mês",
+                "Media": "Média de Consumo",
+                "Cod_Equip": "Código do Equipamento"
+            }
+        )
 
+        # Estilizar gráfico
+        fig_linha.update_layout(
+            xaxis_tickangle=-45,
+            legend_title_text="Equipamento",
+            hovermode="x unified"
+        )
+
+        st.plotly_chart(fig_linha, use_container_width=True)
 
 # Ranking por Equipamento
 with st.expander("🚜 Ranking de Veículos por Consumo Médio", expanded=True):
