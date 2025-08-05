@@ -169,10 +169,6 @@ with st.expander("📦 Distribuição de Consumo por Classe Operacional", expand
     fig_box.update_layout(xaxis_tickangle=-45)
     st.plotly_chart(fig_box, use_container_width=True)
 
-    fig_comp.update_layout(xaxis_tickangle=-45)
-    st.plotly_chart(fig_comp, use_container_width=True)
-
-
 # Tabela interativa com AgGrid
 with st.expander("📋 Tabela Detalhada com Filtros", expanded=False):
     gb = GridOptionsBuilder.from_dataframe(df_filtrado)
