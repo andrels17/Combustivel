@@ -28,16 +28,21 @@ st.title("📊 Dashboard de Consumo de Abastecimentos")
 
 # Filtros
 st.sidebar.header("Filtros")
-classes = st.sidebar.multiselect("Classe do Veículo", options=df["Classe"].dropna().unique(), default=df["Classe"].dropna().unique())
+classes_op = st.sidebar.multiselect("Classe Operacional", options=df["Classe_Operacional"].dropna().unique(), default=df["Classe_Operacional"].dropna().unique())
 periodo = st.sidebar.date_input("Período", [df["Data"].min(), df["Data"].max()])
 
-filtro = (df["Classe"].isin(classes)) & (df["Data"] >= pd.to_datetime(periodo[0])) & (df["Data"] <= pd.to_datetime(periodo[1]))
+filtro = (df["Classe_Operacional"].isin(classes_op)) & (df["Data"] >= pd.to_datetime(periodo[0])) & (df["Data"] <= pd.to_datetime(periodo[1]))
 df_filtrado = df[filtro]
 
-# 1. Equipamentos com consumo acima da média
-with st.expander("⬆️ Equipamentos com Consumo Acima da Média", expanded=True):
-    acima_media = df_filtrado[df_filtrado["Media"] > df_filtrado["Media_P"]]
-    st.dataframe(acima_media[["Data", "Descricao_Equip", "Media", "Media_P", "Classe"]])
+# Visão geral interativa
+with st.expander("🔄 Visão Geral por Classe Operacional", expanded=True):
+    media_por_classe_op = df_filtrado.groupby("Classe_Operacional")["Media"].mean().reset_index()
+    fig_media_op = px.bar(media_por_classe_op, x="Classe_Operacional", y="Media", text="Media",
+                          title="Média de Consumo por Classe Operacional",
+                          labels={"Media": "Média (km/l ou equivalente)"})
+    fig_media_op.update_traces(texttemplate='%{text:.2f}', textposition='outside')
+    fig_media_op.update_layout(uniformtext_minsize=8, uniformtext_mode='hide')
+    st.plotly_chart(fig_media_op, use_container_width=True)
 
 # 2. Consumo por Classe
 with st.expander("📈 Consumo Total por Classe", expanded=True):
