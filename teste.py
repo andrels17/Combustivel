@@ -134,12 +134,6 @@ def sidebar_filters(df: pd.DataFrame) -> dict:
         "periodo": sel_periodo
     }
 
-# ... restante do código segue sem alterações ...
-
-if __name__ == "__main__":
-    main()
-
-
 def filtrar_dados(df: pd.DataFrame, opts: dict) -> pd.DataFrame:
     """Aplica todos os filtros no DataFrame e retorna o subset."""
     mask = (
