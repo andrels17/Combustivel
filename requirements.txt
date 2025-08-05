@@ -5,4 +5,3 @@ openpyxl
 plotly
 unidecode
 matplotlib
-locale
