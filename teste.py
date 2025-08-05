@@ -277,7 +277,7 @@ def main():
     )
     st.plotly_chart(fig2, use_container_width=True)
 
- # 4.3) Consumo Mensal (Top 10 Equipamentos)
+    # 4.3) Consumo Mensal (Top 10 Equipamentos) com rótulo aprimorado e dados visíveis
     top10 = (
         df_f.groupby("Cod_Equip")["Qtde_Litros"]
         .sum()
@@ -287,46 +287,45 @@ def main():
     
     trend = (
         df_f[df_f["Cod_Equip"].isin(top10)]
-        .groupby(["AnoMes", "Cod_Equip", "Descricao_Equip"])["Media"]
+        .groupby(["Cod_Equip", "Descricao_Equip"])["Media"]
         .mean()
         .reset_index()
     )
     
-    trend["AnoMes"] = trend["AnoMes"].astype(str)
-    
-    # Criar rótulo combinando código e descrição
+    # Criar rótulo no formato "2042 - TRATOR DE PNEUS (4X4)"
     trend["Equip_Label"] = trend.apply(
         lambda row: f"{row['Cod_Equip']} - {row['Descricao_Equip']}", axis=1
     )
     
-    # Gráfico com Plotly
-    fig3 = px.bar(
+    # Arredondar para 1 casa decimal
+    trend["Media"] = trend["Media"].round(1)
+    
+    # Criar gráfico
+    fig = px.bar(
         trend,
-        x="AnoMes",
+        x="Equip_Label",
         y="Media",
-        color="Equip_Label",
-        barmode="group",
-        title="Média de Consumo por Período (Top 10 Equip.)",
+        text="Media",  # Isso exibe o valor acima da barra
+        title="Média de Consumo por Equipamento (Top 10)",
         labels={
-            "AnoMes": "Período",
-            "Media": "Média de Consumo",
-            "Equip_Label": "Equipamento"
+            "Equip_Label": "Equipamento",
+            "Media": "Média de Consumo"
         }
     )
     
-    fig3.update_layout(
-        xaxis=dict(
-            tickmode="array",
-            tickvals=trend["AnoMes"].unique(),
-            ticktext=trend["AnoMes"].unique(),
-            tickangle=-45
-        ),
-        legend_title_text="Equipamentos",
-        margin=dict(l=20, r=20, t=50, b=50)
+    fig.update_traces(
+        textposition="outside",  # Mostra os valores acima da barra
+        marker=dict(line=dict(color="black", width=0.5))  # Borda sutil nas barras
+    )
+    
+    fig.update_layout(
+        xaxis_tickangle=-45,
+        margin=dict(l=20, r=20, t=50, b=80),
+        yaxis=dict(title="Média de Consumo (L)")
     )
     
     # Exibe no Streamlit
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
     st.markdown("---")
     # 5) Tabela detalhada com AgGrid
     with st.expander("📋 Tabela Interativa", expanded=False):
