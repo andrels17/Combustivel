@@ -263,9 +263,6 @@ def main():
     )
     st.plotly_chart(fig2, use_container_width=True)
 
-def main():
-    # ... outras seções (KPIs, gráficos, etc.) ...
-
     # 4.3) Consumo Mensal (Top 10 Equipamentos) em barras agrupadas
     top10 = (
         df_f.groupby("Cod_Equip")["Qtde_Litros"]
