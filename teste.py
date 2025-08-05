@@ -2,6 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from st_aggrid import AgGrid, GridOptionsBuilder
+import locale
+
+# Definir localização para o formato brasileiro
+locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
 
 # Carregar os dados
 @st.cache_data
@@ -30,19 +34,29 @@ st.title("📊 Dashboard de Consumo de Abastecimentos")
 
 # Filtros
 st.sidebar.header("Filtros")
-classes_op = st.sidebar.multiselect("Classe Operacional", options=df["Classe_Operacional"].dropna().unique(), default=df["Classe_Operacional"].dropna().unique())
-safras = st.sidebar.multiselect("Safra", options=df["Safra"].dropna().unique(), default=df["Safra"].dropna().unique())
-anos = st.sidebar.multiselect("Ano", options=df["Ano"].dropna().unique(), default=df["Ano"].dropna().unique())
-meses = st.sidebar.multiselect("Mês", options=sorted(df["Mes"].dropna().unique()), default=sorted(df["Mes"].dropna().unique()))
-semanas = st.sidebar.multiselect("Semana", options=sorted(df["Semana"].dropna().unique()), default=sorted(df["Semana"].dropna().unique()))
+classes_op = st.sidebar.checkbox("Todas as Classes Operacionais", value=True)
+selected_classes_op = df["Classe_Operacional"].dropna().unique() if classes_op else st.sidebar.multiselect("Classe Operacional", options=df["Classe_Operacional"].dropna().unique())
+
+safras_check = st.sidebar.checkbox("Todas as Safras", value=True)
+selected_safras = df["Safra"].dropna().unique() if safras_check else st.sidebar.multiselect("Safra", options=df["Safra"].dropna().unique())
+
+anos_check = st.sidebar.checkbox("Todos os Anos", value=True)
+selected_anos = df["Ano"].dropna().unique() if anos_check else st.sidebar.multiselect("Ano", options=df["Ano"].dropna().unique())
+
+meses_check = st.sidebar.checkbox("Todos os Meses", value=True)
+selected_meses = sorted(df["Mes"].dropna().unique()) if meses_check else st.sidebar.multiselect("Mês", options=sorted(df["Mes"].dropna().unique()))
+
+semanas_check = st.sidebar.checkbox("Todas as Semanas", value=True)
+selected_semanas = sorted(df["Semana"].dropna().unique()) if semanas_check else st.sidebar.multiselect("Semana", options=sorted(df["Semana"].dropna().unique()))
+
 periodo = st.sidebar.date_input("Período", [df["Data"].min(), df["Data"].max()])
 
 filtro = (
-    df["Classe_Operacional"].isin(classes_op) &
-    df["Safra"].isin(safras) &
-    df["Ano"].isin(anos) &
-    df["Mes"].isin(meses) &
-    df["Semana"].isin(semanas) &
+    df["Classe_Operacional"].isin(selected_classes_op) &
+    df["Safra"].isin(selected_safras) &
+    df["Ano"].isin(selected_anos) &
+    df["Mes"].isin(selected_meses) &
+    df["Semana"].isin(selected_semanas) &
     (df["Data"] >= pd.to_datetime(periodo[0])) &
     (df["Data"] <= pd.to_datetime(periodo[1]))
 )
@@ -50,8 +64,8 @@ df_filtrado = df[filtro]
 
 # KPIs
 col1, col2, col3 = st.columns(3)
-col1.metric("Total de Litros Abastecidos", f"{df_filtrado['Qtde_Litros'].sum():,.2f} L")
-col2.metric("Média de Consumo (todos)", f"{df_filtrado['Media'].mean():.2f} km/L")
+col1.metric("Total de Litros Abastecidos", f"{df_filtrado['Qtde_Litros'].sum():,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+col2.metric("Média de Consumo (todos)", f"{df_filtrado['Media'].mean():.2f}".replace('.', ','))
 col3.metric("Qtd. Equipamentos Únicos", df_filtrado["Cod_Equip"].nunique())
 
 # Visão geral interativa
@@ -64,30 +78,30 @@ with st.expander("🔄 Visão Geral por Classe Operacional", expanded=True):
     fig_media_op.update_layout(uniformtext_minsize=8, uniformtext_mode='hide', xaxis_tickangle=-45)
     st.plotly_chart(fig_media_op, use_container_width=True)
 
-# 2. Consumo por Classe
+# Consumo por Classe
 with st.expander("📈 Consumo Total por Classe", expanded=True):
     classe_group = df_filtrado.groupby("Classe")["Qtde_Litros"].sum().reset_index().sort_values("Qtde_Litros", ascending=False)
     fig_classe = px.bar(classe_group, x="Classe", y="Qtde_Litros", text="Qtde_Litros",
                         labels={"Qtde_Litros": "Litros Abastecidos"}, title="Consumo Total por Classe")
-    fig_classe.update_traces(texttemplate='%{text:.2s}', textposition='outside')
+    fig_classe.update_traces(texttemplate='%{text:.2f}', textposition='outside')
     fig_classe.update_layout(uniformtext_minsize=8, uniformtext_mode='hide', xaxis_tickangle=-45)
     st.plotly_chart(fig_classe, use_container_width=True)
 
-# 3. Consumo Semanal (pizza)
+# Consumo Semanal (pizza)
 with st.expander("🗓️ Consumo Semanal (Pizza)", expanded=True):
     semana_group = df_filtrado.groupby("AnoSemana")["Qtde_Litros"].sum().reset_index()
     fig_semana = px.pie(semana_group, names="AnoSemana", values="Qtde_Litros", title="Distribuição de Consumo Semanal")
     st.plotly_chart(fig_semana, use_container_width=True)
 
-# 4. Consumo Mensal (barras)
+# Consumo Mensal (barras)
 with st.expander("📅 Consumo Mensal (Barras)", expanded=True):
     mes_group = df_filtrado.groupby("AnoMes")["Qtde_Litros"].sum().reset_index()
     fig_mes = px.bar(mes_group, x="AnoMes", y="Qtde_Litros", text="Qtde_Litros",
                      title="Consumo Mensal", labels={"Qtde_Litros": "Litros"})
-    fig_mes.update_traces(texttemplate='%{text:.2s}', textposition='outside')
+    fig_mes.update_traces(texttemplate='%{text:.2f}', textposition='outside')
     st.plotly_chart(fig_mes, use_container_width=True)
 
-# 5. Ranking por Equipamento
+# Ranking por Equipamento
 with st.expander("🚜 Ranking de Veículos por Consumo Médio", expanded=True):
     ranking_media = df_filtrado.groupby("Cod_Equip")["Media"].mean().reset_index()
     ranking_media = ranking_media.sort_values("Media", ascending=False).head(10)
@@ -97,7 +111,7 @@ with st.expander("🚜 Ranking de Veículos por Consumo Médio", expanded=True):
     fig_rank.update_layout(xaxis_tickangle=-45)
     st.plotly_chart(fig_rank, use_container_width=True)
 
-# 6. Comparativo por Classe Operacional
+# Comparativo por Classe Operacional
 with st.expander("📊 Comparativo de Classes Operacionais", expanded=True):
     comparativo = df_filtrado.groupby(["Classe_Operacional", "Cod_Equip"])["Media"].mean().reset_index()
     fig_comp = px.bar(comparativo, x="Classe_Operacional", y="Media", color="Cod_Equip", 
@@ -105,7 +119,7 @@ with st.expander("📊 Comparativo de Classes Operacionais", expanded=True):
     fig_comp.update_layout(xaxis_tickangle=-45)
     st.plotly_chart(fig_comp, use_container_width=True)
 
-# 7. Tabela interativa com AgGrid
+# Tabela interativa com AgGrid
 with st.expander("📋 Tabela Detalhada com Filtros", expanded=False):
     gb = GridOptionsBuilder.from_dataframe(df_filtrado)
     gb.configure_pagination()
@@ -113,7 +127,7 @@ with st.expander("📋 Tabela Detalhada com Filtros", expanded=False):
     grid_options = gb.build()
     AgGrid(df_filtrado.drop(columns=["Descricao_Equip"]), gridOptions=grid_options, enable_enterprise_modules=True, height=400)
 
-# 8. Exportação de dados
+# Exportação de dados
 with st.expander("⬇️ Exportar Dados", expanded=False):
     csv = df_filtrado.to_csv(index=False).encode("utf-8")
     st.download_button("📥 Baixar CSV", data=csv, file_name="dados_filtrados.csv", mime="text/csv")
