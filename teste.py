@@ -8,7 +8,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder
 # --------------- Configurações ---------------
 
 EXCEL_PATH = "Acompto_Abast.xlsx"
-SHEET_NAME = "BD"
+SHEET_NAME  = "BD"
 ALERTA_MIN = 1.5
 ALERTA_MAX = 5.0
 
@@ -16,16 +16,17 @@ ALERTA_MAX = 5.0
 
 def formatar_brasileiro(valor: float) -> str:
     """Formata número no padrão brasileiro com duas casas decimais."""
-    return "{:,.2f}".format(valor).replace(",", "X").replace(".", ",").replace("X", ".")
+    return "{:,.2f}".format(valor).replace(",", "X") \
+                                  .replace(".", ",") \
+                                  .replace("X", ".")
 
 @st.cache_data(show_spinner=False)
 def load_data(path: str, sheet: str) -> pd.DataFrame:
     """
     Carrega e prepara o DataFrame:
      - Lê Excel, renomeia colunas
-     - Converte Data
+     - Converte datas e números (Qtde_Litros, Media, Media_P, Mes, Semana)
      - Gera colunas Ano, AnoMes, AnoSemana
-     - Converte numerics
      - Define Fazendas
     """
     try:
@@ -40,21 +41,28 @@ def load_data(path: str, sheet: str) -> pd.DataFrame:
         "Ref1", "Ref2", "Unidade", "Safra", "Mes", "Semana",
         "Classe", "Classe_Operacional", "Descricao_Proprietario", "Potencia_CV"
     ]
+
+    # Data
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
     df = df[df["Data"].notna()]
+
+    # Converter Mes e Semana para números
+    df["Mes"] = pd.to_numeric(df["Mes"], errors="coerce").astype("Int64")
+    df["Semana"] = pd.to_numeric(df["Semana"], errors="coerce").astype("Int64")
 
     # Períodos
     df["Ano"] = df["Data"].dt.year
     df["AnoMes"] = df["Data"].dt.to_period("M").astype(str)
     df["AnoSemana"] = df["Data"].dt.strftime("%Y-%U")
 
-    # Números
+    # Números principais
     df["Qtde_Litros"] = pd.to_numeric(df["Qtde_Litros"], errors="coerce")
-    df["Media"] = pd.to_numeric(df["Media"], errors="coerce")
-    df["Media_P"] = pd.to_numeric(df["Media_P"], errors="coerce")
+    df["Media"]       = pd.to_numeric(df["Media"], errors="coerce")
+    df["Media_P"]     = pd.to_numeric(df["Media_P"], errors="coerce")
 
     # Fazenda
     df["Fazenda"] = df["Ref1"].astype(str)
+
     return df
 
 
@@ -64,50 +72,58 @@ def sidebar_filters(df: pd.DataFrame) -> dict:
     Retorna dicionário com as seleções.
     """
     st.sidebar.header("📅 Filtros")
+
     # valores mais recentes
-    ano_max = int(df["Ano"].max())
-    mes_max = int(df[df["Ano"] == ano_max]["Mes"].max())
-    semana_max = sorted(df[df["Ano"] == ano_max]["Semana"].unique())[-1]
+    ano_max   = int(df["Ano"].max())
+    mes_max   = df[df["Ano"] == ano_max]["Mes"].max()
+    semana_max = df[df["Ano"] == ano_max]["Semana"].max()
     safra_max = sorted(df["Safra"].dropna().unique())[-1]
+
+    # Converte Int64 para int normal (se não for nulo)
+    mes_max = int(mes_max) if pd.notna(mes_max) else int(df["Mes"].max())
+    semana_max = int(semana_max) if pd.notna(semana_max) else int(df["Semana"].max())
 
     # Safra
     todas_safras = st.sidebar.checkbox("Todas as Safras", value=False)
-    safras_opts = sorted(df["Safra"].dropna().unique())
-    sel_safras = safras_opts if todas_safras else st.sidebar.multiselect(
+    safras_opts  = sorted(df["Safra"].dropna().unique())
+    sel_safras   = safras_opts if todas_safras else st.sidebar.multiselect(
         "Safra", safras_opts, default=[safra_max]
     )
 
     # Ano → Mês → Semana (dependentes)
     todos_anos = st.sidebar.checkbox("Todos os Anos", value=False)
-    anos_opts = sorted(df["Ano"].unique())
-    sel_anos = anos_opts if todos_anos else st.sidebar.multiselect(
+    anos_opts  = sorted(df["Ano"].unique())
+    sel_anos   = anos_opts if todos_anos else st.sidebar.multiselect(
         "Ano", anos_opts, default=[ano_max]
     )
 
-    meses_opts = sorted(df[df["Ano"].isin(sel_anos)]["Mes"].unique())
+    meses_opts = sorted(df[df["Ano"].isin(sel_anos)]["Mes"].dropna().unique())
     todos_meses = st.sidebar.checkbox("Todos os Meses", value=False)
-    sel_meses = meses_opts if todos_meses else st.sidebar.multiselect(
+    sel_meses   = meses_opts if todos_meses else st.sidebar.multiselect(
         "Mês", meses_opts, default=[mes_max]
     )
 
     semanas_opts = sorted(df[
-        (df["Ano"].isin(sel_anos)) & (df["Mes"].isin(sel_meses))
-    ]["Semana"].unique())
+        (df["Ano"].isin(sel_anos)) &
+        (df["Mes"].isin(sel_meses))
+    ]["Semana"].dropna().unique())
     todos_semanas = st.sidebar.checkbox("Todas as Semanas", value=False)
-    sel_semanas = semanas_opts if todos_semanas else st.sidebar.multiselect(
+    sel_semanas   = semanas_opts if todos_semanas else st.sidebar.multiselect(
         "Semana", semanas_opts, default=[semana_max]
     )
 
     # Classe Operacional
-    todas_classes = st.sidebar.checkbox("Todas as Classes Operacionais", value=True)
+    todas_classes = st.sidebar.checkbox(
+        "Todas as Classes Operacionais", value=True
+    )
     classes_opts = sorted(df["Classe_Operacional"].dropna().unique())
-    sel_classes = classes_opts if todas_classes else st.sidebar.multiselect(
+    sel_classes  = classes_opts if todas_classes else st.sidebar.multiselect(
         "Classe Operacional", classes_opts, default=classes_opts
     )
 
     # Período
     dt_min, dt_max = df["Data"].min(), df["Data"].max()
-    sel_periodo = st.sidebar.date_input("Período", [dt_min, dt_max])
+    sel_periodo   = st.sidebar.date_input("Período", [dt_min, dt_max])
 
     return {
         "safras": sel_safras,
@@ -117,6 +133,11 @@ def sidebar_filters(df: pd.DataFrame) -> dict:
         "classes_op": sel_classes,
         "periodo": sel_periodo
     }
+
+# ... restante do código segue sem alterações ...
+
+if __name__ == "__main__":
+    main()
 
 
 def filtrar_dados(df: pd.DataFrame, opts: dict) -> pd.DataFrame:
