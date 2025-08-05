@@ -110,11 +110,24 @@ with st.expander("📅 Consumo Mensal (Barras)", expanded=True):
     fig_mes.update_traces(texttemplate='%{text:.2f}', textposition='outside')
     st.plotly_chart(fig_mes, use_container_width=True)
 
-# Tendência por equipamento
+# Tendência por equipamento com rótulos personalizados
 with st.expander("📉 Tendência de Consumo por Equipamento", expanded=True):
-    tendencia = df_filtrado.groupby(["AnoMes", "Cod_Equip"])["Media"].mean().reset_index()
-    fig_tend = px.line(tendencia, x="AnoMes", y="Media", color="Cod_Equip", title="Tendência de Consumo Médio por Equipamento")
+    tendencia = df_filtrado.groupby(["AnoMes", "Cod_Equip", "Descricao_Equip"])["Media"].mean().reset_index()
+    
+    # Criar rótulo unificado
+    tendencia["Equipamento"] = tendencia["Cod_Equip"].astype(str) + " - " + tendencia["Descricao_Equip"]
+    
+    fig_tend = px.line(
+        tendencia,
+        x="AnoMes",
+        y="Media",
+        color="Equipamento",
+        title="Tendência de Consumo Médio por Equipamento",
+        labels={"Media": "Média de Consumo", "AnoMes": "Ano/Mês"}
+    )
+    
     st.plotly_chart(fig_tend, use_container_width=True)
+
 
 # Ranking por Equipamento
 with st.expander("🚜 Ranking de Veículos por Consumo Médio", expanded=True):
@@ -144,13 +157,25 @@ with st.expander("🚜 Ranking de Veículos por Consumo Médio", expanded=True):
     fig_rank.update_layout(xaxis_tickangle=-45)
     st.plotly_chart(fig_rank, use_container_width=True)
 
-# Comparativo por Classe Operacional
+# Comparativo por Classe Operacional com rótulos personalizados
 with st.expander("📊 Comparativo de Classes Operacionais", expanded=True):
-    comparativo = df_filtrado.groupby(["Classe_Operacional", "Cod_Equip"])["Media"].mean().reset_index()
-    fig_comp = px.bar(comparativo, x="Classe_Operacional", y="Media", color="Cod_Equip", 
-                      title="Comparativo de Média por Classe Operacional e Equipamento")
+    comparativo = df_filtrado.groupby(["Classe_Operacional", "Cod_Equip", "Descricao_Equip"])["Media"].mean().reset_index()
+    
+    # Criar rótulo unificado
+    comparativo["Equipamento"] = comparativo["Cod_Equip"].astype(str) + " - " + comparativo["Descricao_Equip"]
+    
+    fig_comp = px.bar(
+        comparativo,
+        x="Classe_Operacional",
+        y="Media",
+        color="Equipamento",
+        title="Comparativo de Média por Classe Operacional e Equipamento",
+        labels={"Media": "Média de Consumo", "Classe_Operacional": "Classe Operacional"}
+    )
+    
     fig_comp.update_layout(xaxis_tickangle=-45)
     st.plotly_chart(fig_comp, use_container_width=True)
+
 
 # Tabela interativa com AgGrid
 with st.expander("📋 Tabela Detalhada com Filtros", expanded=False):
