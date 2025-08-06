@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.express as px
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
-# --------------- Configurações Gerais ---------------
+# --------------- Configurações Gerais --------------
 
 EXCEL_PATH = "Acompto_Abast.xlsx"
 SHEET_NAME = "BD"
