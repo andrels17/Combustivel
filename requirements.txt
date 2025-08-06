@@ -6,4 +6,4 @@ plotly>=5.7.0
 unidecode
 matplotlib
 kaleido>=0.2.1
-
+st-aggrid>=0.4.2
