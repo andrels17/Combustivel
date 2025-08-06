@@ -2,6 +2,7 @@
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
@@ -242,20 +243,42 @@ def main():
         palette_seq = paletas[paleta_nome]
 
     with tab1:
-        # 3) Alertas de Consumo
+        # 3) Alertas de Consumo (scatter plot)
         with st.expander("🚨 Alertas de Consumo Fora do Padrão", expanded=True):
-            fora = df_f[
-                (df_f["Media"] < alerta_min)
-                | (df_f["Media"] > alerta_max)
-            ]
-            if fora.empty:
-                st.success("Nenhum consumo fora do padrão.")
-            else:
-                st.warning(f"{fora['Cod_Equip'].nunique()} veículos fora do padrão")
-                st.dataframe(
-                    fora[["Data", "Cod_Equip", "Classe_Operacional", "Media"]],
-                    use_container_width=True
-                )
+            df_alerta = df_f.copy()
+            df_alerta['Status'] = np.where(
+                (df_alerta['Media'] >= alerta_min) & (df_alerta['Media'] <= alerta_max),
+                'Dentro do padrão',
+                'Fora do padrão'
+            )
+
+            total_fora = (df_alerta['Status'] == 'Fora do padrão').sum()
+            st.warning(f"Total de equipamentos fora do padrão: {total_fora}")
+
+            fig_alert = px.scatter(
+                df_alerta,
+                x='Cod_Equip',
+                y='Media',
+                color='Status',
+                hover_data=['Data', 'Classe_Operacional'],
+                title='Consumo por Equipamento: Dentro x Fora do Padrão',
+                labels={'Media': 'Consumo (km/l)', 'Cod_Equip': 'Código Equip.'}
+            )
+            fig_alert.add_hline(
+                y=alerta_min,
+                line_dash='dash',
+                line_color='red',
+                annotation_text='Mínimo',
+                annotation_position='bottom right'
+            )
+            fig_alert.add_hline(
+                y=alerta_max,
+                line_dash='dash',
+                line_color='red',
+                annotation_text='Máximo',
+                annotation_position='top right'
+            )
+            st.plotly_chart(fig_alert, use_container_width=True)
 
         # 4.1) Média por Classe Operacional
         media_op = df_f.groupby("Classe_Operacional")["Media"].mean().reset_index()
@@ -268,14 +291,13 @@ def main():
         fig1.update_layout(xaxis_tickangle=-45, uniformtext_mode="hide")
         st.plotly_chart(fig1, use_container_width=True)
 
-        # 4.2) Consumo Mensal vs Média (dropdown + linha de tendência)
+        # 4.2) Consumo Mensal vs Média
         agg = df_f.groupby("AnoMes")[["Qtde_Litros", "Media"]].mean().reset_index()
         agg["AnoMes"] = agg["AnoMes"].astype(str)
-
         fig2 = px.bar(
             agg, x="AnoMes", y="Qtde_Litros", text="Qtde_Litros",
             title="Consumo Mensal / Média",
-            labels={"Qtde_Litros": "Litros", "AnoMes": "Período"}
+            labels={"Qtte_Litros": "Litros", "AnoMes": "Período"}
         )
         fig2.update_traces(texttemplate="%{text:.1f}", textposition="outside")
         fig2.add_hline(
@@ -305,7 +327,7 @@ def main():
                         "method": "update",
                         "args": [
                             {"y": ["Media"]},
-                            {"yaxis": {"title": "Média (km/l)"}}  
+                            {"yaxis": {"title": "Média (km/l)"}}
                         ]
                     }
                 ],
@@ -367,7 +389,6 @@ def main():
     with tab2:
         st.header("📋 Tabela Detalhada")
 
-        # Configura estilo condicional via cellStyleRules (objeto JS)
         cell_style_rules = {
             'fora_padrao': {
                 'condition': f'x.value < {alerta_min} || x.value > {alerta_max}',
