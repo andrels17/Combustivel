@@ -69,9 +69,7 @@ def load_data(path: str, sheet: str) -> pd.DataFrame:
     df["Fazenda"] = df["Ref1"].astype(str)
 
     return df
-
-Esse erro acontece porque o Streamlit gera um ID interno para cada widget com base no rótulo (label) e, quando você usa o mesmo texto duas vezes (ou mais), acaba gerando IDs duplicados. A solução é atribuir a cada widget uma chave (key) única.
-Abaixo segue a versão ajustada da sua função sidebar_filters, com key explícito em todos os checkboxes, multiselects e no date_input. Basta substituir sua função atual por esta:
+    
 def sidebar_filters(df: pd.DataFrame) -> dict:
     """
     Constrói a barra lateral de filtros, com dependência entre eles.
