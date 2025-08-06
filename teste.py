@@ -70,57 +70,70 @@ def load_data(path: str, sheet: str) -> pd.DataFrame:
 
     return df
 
+Esse erro acontece porque o Streamlit gera um ID interno para cada widget com base no rótulo (label) e, quando você usa o mesmo texto duas vezes (ou mais), acaba gerando IDs duplicados. A solução é atribuir a cada widget uma chave (key) única.
+Abaixo segue a versão ajustada da sua função sidebar_filters, com key explícito em todos os checkboxes, multiselects e no date_input. Basta substituir sua função atual por esta:
 def sidebar_filters(df: pd.DataFrame) -> dict:
     """
     Constrói a barra lateral de filtros, com dependência entre eles.
-    Retorna dicionário com as seleções.
+    Cada widget recebe uma key única para evitar StreamlitDuplicateElementId.
     """
     st.sidebar.header("📅 Filtros")
 
-    # Valores mais recentes
     ano_max    = int(df["Ano"].max())
     mes_max    = int(df[df["Ano"] == ano_max]["Mes"].max())
     semana_max = int(df[df["Ano"] == ano_max]["Semana"].max())
     safra_max  = sorted(df["Safra"].dropna().unique())[-1]
 
     # Safra
-    todas_safras = st.sidebar.checkbox("Todas as Safras", value=False)
-    safras_opts  = sorted(df["Safra"].dropna().unique())
-    sel_safras   = safras_opts if todas_safras else st.sidebar.multiselect(
-        "Safra", safras_opts, default=[safra_max]
+    todas_safras = st.sidebar.checkbox(
+        "Todas as Safras", value=False, key="cb_todas_safras"
+    )
+    safras_opts = sorted(df["Safra"].dropna().unique())
+    sel_safras = safras_opts if todas_safras else st.sidebar.multiselect(
+        "Safra", safras_opts, default=[safra_max], key="ms_safras"
     )
 
     # Ano → Mês → Semana (dependentes)
-    todos_anos = st.sidebar.checkbox("Todos os Anos", value=False)
+    todos_anos = st.sidebar.checkbox(
+        "Todos os Anos", value=False, key="cb_todos_anos"
+    )
     anos_opts  = sorted(df["Ano"].unique())
     sel_anos   = anos_opts if todos_anos else st.sidebar.multiselect(
-        "Ano", anos_opts, default=[ano_max]
+        "Ano", anos_opts, default=[ano_max], key="ms_anos"
     )
 
-    meses_opts   = sorted(df[df["Ano"].isin(sel_anos)]["Mes"].unique())
-    todos_meses  = st.sidebar.checkbox("Todos os Meses", value=False)
-    sel_meses    = meses_opts if todos_meses else st.sidebar.multiselect(
-        "Mês", meses_opts, default=[mes_max]
+    todos_meses = st.sidebar.checkbox(
+        "Todos os Meses", value=False, key="cb_todos_meses"
+    )
+    meses_opts  = sorted(df[df["Ano"].isin(sel_anos)]["Mes"].unique())
+    sel_meses   = meses_opts if todos_meses else st.sidebar.multiselect(
+        "Mês", meses_opts, default=[mes_max], key="ms_meses"
     )
 
-    semanas_opts  = sorted(
+    todos_semanas = st.sidebar.checkbox(
+        "Todas as Semanas", value=False, key="cb_todas_semanas"
+    )
+    semanas_opts = sorted(
         df[(df["Ano"].isin(sel_anos)) & (df["Mes"].isin(sel_meses))]["Semana"].unique()
     )
-    todos_semanas = st.sidebar.checkbox("Todas as Semanas", value=False)
-    sel_semanas   = semanas_opts if todos_semanas else st.sidebar.multiselect(
-        "Semana", semanas_opts, default=[semana_max]
+    sel_semanas = semanas_opts if todos_semanas else st.sidebar.multiselect(
+        "Semana", semanas_opts, default=[semana_max], key="ms_semanas"
     )
 
     # Classe Operacional
-    todas_classes = st.sidebar.checkbox("Todas as Classes Operacionais", value=True)
-    classes_opts  = sorted(df["Classe_Operacional"].dropna().unique())
-    sel_classes   = classes_opts if todas_classes else st.sidebar.multiselect(
-        "Classe Operacional", classes_opts, default=classes_opts
+    todas_classes = st.sidebar.checkbox(
+        "Todas as Classes Operacionais", value=True, key="cb_todas_classes"
+    )
+    classes_opts = sorted(df["Classe_Operacional"].dropna().unique())
+    sel_classes  = classes_opts if todas_classes else st.sidebar.multiselect(
+        "Classe Operacional", classes_opts, default=classes_opts, key="ms_classes"
     )
 
     # Período
     dt_min, dt_max = df["Data"].min(), df["Data"].max()
-    sel_periodo    = st.sidebar.date_input("Período", [dt_min, dt_max])
+    sel_periodo = st.sidebar.date_input(
+        "Período", [dt_min, dt_max], key="di_periodo"
+    )
 
     return {
         "safras":     sel_safras,
