@@ -4,3 +4,4 @@ openpyxl>=3.0
 plotly>=5.7.0
 matplotlib>=3.5
 unidecode
+st-aggrid>=0.4.2
