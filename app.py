@@ -7,17 +7,17 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 # --------------- Configurações Gerais ---------------
 
 EXCEL_PATH = "Acompto_Abast.xlsx"
-SHEET_NAME = "BD"
+SHEET_NAME  = "BD"
 
 # --------------- Funções Utilitárias ---------------
 
 def formatar_brasileiro(valor: float) -> str:
     """Formata número no padrão brasileiro com duas casas decimais."""
+    if pd.isna(valor):
+        return "–"
     return (
         "{:,.2f}".format(valor)
-        .replace(",", "X")
-        .replace(".", ",")
-        .replace("X", ".")
+        .replace(",", "X").replace(".", ",").replace("X", ".")
     )
 
 @st.cache_data(show_spinner=False)
@@ -77,7 +77,8 @@ def sidebar_filters(df: pd.DataFrame) -> dict:
     sel_safras = (
         safras_opts if todas_safras
         else st.sidebar.multiselect(
-            "Safra", safras_opts, default=[safra_max], key="sidebar_ms_safras"
+            "Safra", safras_opts,
+            default=[safra_max], key="sidebar_ms_safras"
         )
     )
 
@@ -88,7 +89,8 @@ def sidebar_filters(df: pd.DataFrame) -> dict:
     sel_anos = (
         anos_opts if todos_anos
         else st.sidebar.multiselect(
-            "Ano", anos_opts, default=[ano_max], key="sidebar_ms_anos"
+            "Ano", anos_opts,
+            default=[ano_max], key="sidebar_ms_anos"
         )
     )
 
@@ -99,7 +101,8 @@ def sidebar_filters(df: pd.DataFrame) -> dict:
     sel_meses = (
         meses_opts if todos_meses
         else st.sidebar.multiselect(
-            "Mês", meses_opts, default=[mes_max], key="sidebar_ms_meses"
+            "Mês", meses_opts,
+            default=[mes_max], key="sidebar_ms_meses"
         )
     )
 
@@ -112,21 +115,21 @@ def sidebar_filters(df: pd.DataFrame) -> dict:
     sel_semanas = (
         semanas_opts if todos_semanas
         else st.sidebar.multiselect(
-            "Semana", semanas_opts, default=[semana_max], key="sidebar_ms_semanas"
+            "Semana", semanas_opts,
+            default=[semana_max], key="sidebar_ms_semanas"
         )
     )
 
     todas_classes = st.sidebar.checkbox(
-        "Todas as Classes Operacionais", value=True, key="sidebar_todas_classes"
+        "Todas as Classes Operacionais", value=True,
+        key="sidebar_todas_classes"
     )
     classes_opts = sorted(df["Classe_Operacional"].dropna().unique())
     sel_classes = (
         classes_opts if todas_classes
         else st.sidebar.multiselect(
-            "Classe Operacional",
-            classes_opts,
-            default=classes_opts,
-            key="sidebar_ms_classes"
+            "Classe Operacional", classes_opts,
+            default=classes_opts, key="sidebar_ms_classes"
         )
     )
 
@@ -166,14 +169,19 @@ def calcular_kpis(df: pd.DataFrame) -> dict:
     inicio, fim = df["Data"].min(), df["Data"].max()
     delta       = fim - inicio
     prev        = df[(df["Data"] >= inicio - delta) & (df["Data"] < inicio)]
-    prev_litros = prev["Qtde_Litros"].sum() or 1
-    delta_pct   = (total_litros - prev_litros) / prev_litros * 100
+    prev_litros = prev["Qtde_Litros"].sum()
+    if prev_litros == 0:
+        delta_pct = None
+    else:
+        delta_pct = (total_litros - prev_litros) / prev_litros * 100
 
+    diff_litros = total_litros - prev_litros
     return {
         "total_litros":     total_litros,
         "media_consumo":    media_consumo,
         "eqp_unicos":       eqp_unicos,
-        "delta_litros_pct": delta_pct
+        "delta_litros_pct": delta_pct,
+        "diff_litros":      diff_litros
     }
 
 # --------------- Função Principal ---------------
@@ -195,61 +203,34 @@ def main():
         st.stop()
 
     # KPI Metrics
-    kpis     = calcular_kpis(df_f)
+    kpis          = calcular_kpis(df_f)
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Litros Consumidos", formatar_brasileiro(kpis["total_litros"]))
+    c1.metric("Litros Consumidos", formatar_brasileiro(kpis["total_litros"]),
+              delta=f"{kpis['diff_litros']:.0f} L")
     c2.metric("Média de Consumo", formatar_brasileiro(kpis["media_consumo"]))
     c3.metric("Equipamentos Únicos", kpis["eqp_unicos"])
-    c4.metric("Δ Litros (%)", f"{kpis['delta_litros_pct']:.1f}%")
+    delta_str = f"{kpis['delta_litros_pct']:.1f}%" if kpis["delta_litros_pct"] is not None else "–"
+    c4.metric("Δ Litros (%)", delta_str)
 
     # Criação das abas
-    tab1, tab2, tab3 = st.tabs(["📊 Gráficos", "📋 Tabela", "⚙️ Configurações"])
-
-    # ─────────────── TAB 3: Padrões por Classe Operacional ───────────────
-    with tab3:
-        st.header("⚙️ Padrões por Classe Operacional")
-
-        classes = sorted(df["Classe_Operacional"].dropna().unique())
-
-        # Inicializa thresholds defaults
-        if "thr" not in st.session_state:
-            st.session_state.thr = {
-                cls: {"min": 1.5, "max": 5.0} for cls in classes
-            }
-
-        # Inputs para cada classe
-        for cls in classes:
-            col_min, col_max = st.columns(2)
-            with col_min:
-                mn = st.number_input(
-                    f"{cls} → Mínimo (km/l)",
-                    min_value=0.0, max_value=100.0,
-                    value=st.session_state.thr[cls]["min"],
-                    step=0.1, key=f"min_{cls}"
-                )
-            with col_max:
-                mx = st.number_input(
-                    f"{cls} → Máximo (km/l)",
-                    min_value=0.0, max_value=100.0,
-                    value=st.session_state.thr[cls]["max"],
-                    step=0.1, key=f"max_{cls}"
-                )
-            st.session_state.thr[cls]["min"] = mn
-            st.session_state.thr[cls]["max"] = mx
+    tab1, tab2, tab3 = st.tabs([
+        "📊 Gráficos",
+        "📋 Tabela",
+        "⚙️ Configurações"
+    ])
 
     # ─────────────── TAB 1: Gráficos com thresholds por classe ───────────────
     with tab1:
-        df_alerta = df_f.copy()
-        df_alerta["thr_min"] = df_alerta["Classe_Operacional"].map(
-            lambda c: st.session_state.thr[c]["min"]
-        )
-        df_alerta["thr_max"] = df_alerta["Classe_Operacional"].map(
-            lambda c: st.session_state.thr[c]["max"]
-        )
+        # Mapeia thresholds das classes
+        thr_df = pd.DataFrame.from_dict(
+            st.session_state.get("thr", {}),
+            orient="index"
+        ).rename_axis("Classe_Operacional").reset_index()
+        df_alerta = df_f.merge(thr_df, on="Classe_Operacional", how="left")
 
         df_alerta["Status"] = np.where(
-            (df_alerta["Media"] >= df_alerta["thr_min"])
-            & (df_alerta["Media"] <= df_alerta["thr_max"]),
+            (df_alerta["Media"] >= df_alerta["min"]) &
+            (df_alerta["Media"] <= df_alerta["max"]),
             "Dentro do padrão", "Fora do padrão"
         )
 
@@ -258,37 +239,31 @@ def main():
 
         df_fora = (
             df_alerta.query("Status=='Fora do padrão'")
-            .assign(
-                Equip_Label=lambda d: (
-                    d.Cod_Equip.astype(str) + " – " + d.Descricao_Equip
-                )
-            )
-            .sort_values("Media", ascending=True)
+                     .assign(Equip_Label=lambda d: d.Cod_Equip.astype(str)
+                                               + " – " + d.Descricao_Equip)
+                     .sort_values("Media", ascending=True)
         )
 
+        # Gráfico: equipamentos fora do padrão
         fig_hbar = px.bar(
-            df_fora,
-            x="Media",
-            y="Equip_Label",
-            orientation="h",
+            df_fora, x="Media", y="Equip_Label", orientation="h",
+            color="Status", color_discrete_map={"Fora do padrão": "red"},
             title="Consumo dos Equipamentos Fora do Padrão (km/l)",
             labels={"Media": "Consumo (km/l)", "Equip_Label": "Equipamento"}
         )
         fig_hbar.update_layout(height=600, yaxis={"automargin": True})
         st.plotly_chart(fig_hbar, use_container_width=True)
 
-        # Média por Classe Operacional
+        # Gráfico: média por classe operacional
         media_op = df_f.groupby("Classe_Operacional")["Media"].mean().reset_index()
-        fig1 = px.bar(
-            media_op, x="Classe_Operacional", y="Media", text="Media",
-            title="Média de Consumo por Classe Operacional",
-            labels={"Media": "km/l ou equiv."}
+        fig1 = px.box(
+            df_f, x="Classe_Operacional", y="Media",
+            title="Distribuição de Consumo por Classe Operacional",
+            labels={"Media": "km/l", "Classe_Operacional": "Classe"}
         )
-        fig1.update_traces(texttemplate="%{text:.2f}", textposition="outside")
-        fig1.update_layout(xaxis_tickangle=-45, uniformtext_mode="hide")
         st.plotly_chart(fig1, use_container_width=True)
 
-        # Consumo Mensal vs Média
+        # Gráfico: consumo mensal vs média
         agg = df_f.groupby("AnoMes")[["Qtde_Litros", "Media"]].mean().reset_index()
         agg["AnoMes"] = agg["AnoMes"].astype(str)
         fig2 = px.bar(
@@ -296,93 +271,126 @@ def main():
             title="Consumo Mensal / Média",
             labels={"Qtde_Litros": "Litros", "AnoMes": "Período"}
         )
-        fig2.update_traces(texttemplate="%{text:.1f}", textposition="outside")
         fig2.add_hline(
             y=agg["Qtde_Litros"].mean(),
             line_dash="dash", line_color="gray",
             annotation_text="Média Global", annotation_position="top left"
         )
-        fig2.update_layout(
-            xaxis=dict(tickmode="array", tickvals=agg["AnoMes"],
-                       ticktext=agg["AnoMes"], tickangle=-45),
-            updatemenus=[{
-                "buttons": [
-                    {"label": "Litros", "method": "update",
-                     "args":[{"y":["Qtde_Litros"]},
-                             {"yaxis":{"title":"Litros"}}]},
-                    {"label": "Média", "method": "update",
-                     "args":[{"y":["Media"]},
-                             {"yaxis":{"title":"Média (km/l)"}}]}
-                ],
-                "direction":"down","showactive":True,
-                "pad":{"r":10,"t":10},
-                "x":0,"xanchor":"left","y":1.1,"yanchor":"top"
-            }]
-        )
         st.plotly_chart(fig2, use_container_width=True)
 
-        # Top 10 Equipamentos
+        # Gráfico: Top 10 equipamentos por consumo
         top10 = df_f.groupby("Cod_Equip")["Qtde_Litros"].sum().nlargest(10).index
         trend = (
             df_f[df_f["Cod_Equip"].isin(top10)]
-            .groupby(["Cod_Equip","Descricao_Equip"])["Media"]
-            .mean().reset_index()
+                .groupby(["Cod_Equip", "Descricao_Equip"])["Media"].mean()
+                .reset_index()
+                .sort_values("Media", ascending=False)
         )
         trend["Equip_Label"] = trend.apply(
             lambda r: f"{r['Cod_Equip']} - {r['Descricao_Equip']}", axis=1
         )
         trend["Media"] = trend["Media"].round(1)
-        trend = trend.sort_values("Media", ascending=False)
 
         fig3 = px.bar(
             trend, x="Equip_Label", y="Media", text="Media",
-            color_discrete_sequence=st.session_state.thr.get("palette_seq",
-                                   px.colors.qualitative.Plotly),
             title="Média de Consumo por Equipamento (Top 10)",
-            labels={"Equip_Label":"Equipamento","Media":"Média de Consumo (L)"}
+            labels={"Equip_Label": "Equipamento", "Media": "Média (km/l)"}
         )
-        fig3.update_traces(textposition="outside",
-                           marker=dict(line=dict(color="black",width=0.5)))
-        fig3.update_layout(xaxis_tickangle=-45,
-                           margin=dict(l=20,r=20,t=50,b=80))
+        fig3.update_traces(textposition="outside", marker=dict(line=dict(color="black", width=0.5)))
+        fig3.update_layout(xaxis_tickangle=-45, margin=dict(l=20, r=20, t=50, b=80))
         st.plotly_chart(fig3, use_container_width=True)
 
-        img_bytes = fig3.to_image(format="png")
+        # Download do Top 10
+        @st.cache_data
+        def get_fig3_png(fig):
+            return fig.to_image(format="png")
+        img_bytes = get_fig3_png(fig3)
         st.download_button(
             "📷 Exportar Top10 (PNG)",
-            data=img_bytes,
-            file_name="top10.png",
-            mime="image/png",
+            data=img_bytes, file_name="top10.png", mime="image/png",
             key="download_top10"
         )
+
+        # ─────────── Comparativo de Consumo Acumulado por Safra ───────────
+        st.header("📈 Comparativo de Consumo Acumulado por Safra")
+
+        safra_options = sorted(df["Safra"].dropna().unique())
+        sel_safras_cmp = st.multiselect(
+            "Selecione as safras para comparar",
+            safra_options,
+            default=safra_options[-2:] if len(safra_options) >= 2 else [safra_options[-1]],
+            help="Comparativo acumulado de litros desde o início da safra"
+        )
+
+        if sel_safras_cmp:
+            df_cmp = df[df["Safra"].isin(sel_safras_cmp)].copy()
+            primeiras = df_cmp.groupby("Safra")["Data"].min().to_dict()
+            df_cmp["Dia_Inicial"] = df_cmp["Safra"].map(primeiras)
+            df_cmp["Dias_Uteis"] = (df_cmp["Data"] - df_cmp["Dia_Inicial"]).dt.days + 1
+
+            df_cmp = (
+                df_cmp
+                .groupby(["Safra", "Dias_Uteis"])["Qtde_Litros"]
+                .sum()
+                .groupby(level=0)
+                .cumsum()
+                .reset_index()
+            )
+
+            fig_acum = px.line(
+                df_cmp,
+                x="Dias_Uteis",
+                y="Qtde_Litros",
+                color="Safra",
+                markers=True,
+                labels={
+                    "Dias_Uteis": "Dia desde início da safra",
+                    "Qtde_Litros": "Consumo acumulado (L)",
+                    "Safra": "Safra"
+                },
+                title="Consumo Acumulado por Safra"
+            )
+
+            # Destacar o ponto "hoje" da safra mais recente
+            ultima = sel_safras_cmp[-1]
+            df_u = df_cmp[df_cmp["Safra"] == ultima]
+            fig_acum.add_scatter(
+                x=[df_u["Dias_Uteis"].max()],
+                y=[df_u["Qtde_Litros"].max()],
+                mode="markers+text",
+                text=[f"Hoje: {formatar_brasileiro(df_u['Qtde_Litros'].max())} L"],
+                textposition="top right",
+                marker=dict(size=10, color="black"),
+                showlegend=False
+            )
+
+            st.plotly_chart(fig_acum, use_container_width=True)
+        else:
+            st.info("Selecione ao menos uma safra para habilitar o comparativo.")
 
     # ─────────────── TAB 2: Tabela Detalhada ───────────────
     with tab2:
         st.header("📋 Tabela Detalhada")
+        classes = df_f["Classe_Operacional"].dropna().unique()
 
-        cell_style_rules = {
-            'fora_padrao': {
-                'condition': (
-                    f"x.value < {st.session_state.thr[c]['min']} || "
-                    f"x.value > {st.session_state.thr[c]['max']}"
-                ),
-                'style': {'backgroundColor':'red','color':'white'}
-            } for c in classes
-        }
+        # Reúne regras de estilo por classe
+        cell_style_rules = {}
+        for cls in classes:
+            mn = st.session_state.thr[cls]["min"]
+            mx = st.session_state.thr[cls]["max"]
+            cell_style_rules[cls] = {
+                'condition': f"x.value < {mn} || x.value > {mx}",
+                'style': {'backgroundColor': 'red', 'color': 'white'}
+            }
 
         gb = GridOptionsBuilder.from_dataframe(df_f)
-        gb.configure_default_column(filterable=True, sortable=True,
-                                    resizable=True)
-        gb.configure_column(
-            "Media",
-            type=["numericColumn"], precision=1,
-            cellStyleRules=cell_style_rules,
-            header_name="Média (L/km)"
-        )
-        gb.configure_column("Qtde_Litros", type=["numericColumn"],
-                            precision=1, header_name="Litros")
-        gb.configure_pagination(paginationAutoPageSize=False,
-                                paginationPageSize=10)
+        gb.configure_default_column(filterable=True, sortable=True, resizable=True)
+        gb.configure_column("Media", type=["numericColumn"], precision=1,
+                            cellStyleRules=cell_style_rules,
+                            header_name="Média (L/km)")
+        gb.configure_column("Qtde_Litros", type=["numericColumn"], precision=1,
+                            header_name="Litros")
+        gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=10)
         gb.configure_selection(selection_mode="multiple",
                                use_checkbox=True, groupSelectsChildren=True)
 
@@ -404,11 +412,38 @@ def main():
             csv_sel = df_sel.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "⬇️ Baixar selecionadas",
-                data=csv_sel,
-                file_name="selecionadas.csv",
-                mime="text/csv",
-                key="download_selected"
+                data=csv_sel, file_name="selecionadas.csv",
+                mime="text/csv", key="download_selected"
             )
+
+    # ─────────────── TAB 3: Padrões por Classe Operacional ───────────────
+    with tab3:
+        st.header("⚙️ Padrões por Classe Operacional")
+        classes = sorted(df["Classe_Operacional"].dropna().unique())
+
+        if "thr" not in st.session_state:
+            st.session_state.thr = {
+                cls: {"min": 1.5, "max": 5.0} for cls in classes
+            }
+
+        for cls in classes:
+            col_min, col_max = st.columns(2)
+            with col_min:
+                mn = st.number_input(
+                    f"{cls} → Mínimo (km/l)",
+                    min_value=0.0, max_value=100.0,
+                    value=st.session_state.thr[cls]["min"],
+                    step=0.1, key=f"min_{cls}"
+                )
+            with col_max:
+                mx = st.number_input(
+                    f"{cls} → Máximo (km/l)",
+                    min_value=0.0, max_value=100.0,
+                    value=st.session_state.thr[cls]["max"],
+                    step=0.1, key=f"max_{cls}"
+                )
+            st.session_state.thr[cls]["min"] = mn
+            st.session_state.thr[cls]["max"] = mx
 
 if __name__ == "__main__":
     main()
