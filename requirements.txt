@@ -1,8 +1,8 @@
 streamlit
-pandas>=1.3
-openpyxl>=3.0
-plotly>=5.7.0
-matplotlib>=3.5
-kaleido==0.2.1
+streamlit-aggrid
+pandas
+openpyxl
+plotly
 unidecode
-st-aggrid>=0.4.2
+matplotlib
+kaleido
