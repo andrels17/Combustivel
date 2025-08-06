@@ -68,9 +68,7 @@ def load_data(path: str, sheet: str) -> pd.DataFrame:
     return df
 
 def sidebar_filters(df: pd.DataFrame) -> dict:
-    """
-    Constrói a barra lateral de filtros, garantindo keys únicas.
-    """
+    """Constrói a barra lateral de filtros, garantindo keys únicas."""
     st.sidebar.header("📅 Filtros")
 
     ano_max    = int(df["Ano"].max())
@@ -78,7 +76,6 @@ def sidebar_filters(df: pd.DataFrame) -> dict:
     semana_max = int(df[df["Ano"] == ano_max]["Semana"].max())
     safra_max  = sorted(df["Safra"].dropna().unique())[-1]
 
-    # Safra
     todas_safras = st.sidebar.checkbox(
         "Todas as Safras", value=False, key="sidebar_todas_safras"
     )
@@ -90,7 +87,6 @@ def sidebar_filters(df: pd.DataFrame) -> dict:
         )
     )
 
-    # Ano → Mês → Semana
     todos_anos = st.sidebar.checkbox(
         "Todos os Anos", value=False, key="sidebar_todos_anos"
     )
@@ -126,7 +122,6 @@ def sidebar_filters(df: pd.DataFrame) -> dict:
         )
     )
 
-    # Classe Operacional
     todas_classes = st.sidebar.checkbox(
         "Todas as Classes Operacionais", value=True, key="sidebar_todas_classes"
     )
@@ -141,7 +136,6 @@ def sidebar_filters(df: pd.DataFrame) -> dict:
         )
     )
 
-    # Período
     dt_min, dt_max = df["Data"].min(), df["Data"].max()
     sel_periodo = st.sidebar.date_input(
         "Período", [dt_min, dt_max], key="sidebar_di_periodo"
@@ -243,7 +237,7 @@ def main():
         palette_seq = paletas[paleta_nome]
 
     with tab1:
-        # 3) Alertas de Consumo (scatter plot)
+        # 3) Alertas de Consumo (horizontal bar chart dos fora do padrão)
         with st.expander("🚨 Alertas de Consumo Fora do Padrão", expanded=True):
             df_alerta = df_f.copy()
             df_alerta['Status'] = np.where(
@@ -252,33 +246,34 @@ def main():
                 'Fora do padrão'
             )
 
-            total_fora = (df_alerta['Status'] == 'Fora do padrão').sum()
-            st.warning(f"Total de equipamentos fora do padrão: {total_fora}")
+            # Seleciona apenas os fora do padrão
+            df_fora = (
+                df_alerta[df_alerta['Status'] == 'Fora do padrão']
+                .sort_values("Media", ascending=True)
+            )
+            df_fora["Equip_Label"] = (
+                df_fora["Cod_Equip"].astype(str)
+                + " – "
+                + df_fora["Descricao_Equip"]
+            )
 
-            fig_alert = px.scatter(
-                df_alerta,
-                x='Cod_Equip',
-                y='Media',
-                color='Status',
-                hover_data=['Data', 'Classe_Operacional'],
-                title='Consumo por Equipamento: Dentro x Fora do Padrão',
-                labels={'Media': 'Consumo (km/l)', 'Cod_Equip': 'Código Equip.'}
+            # Métrica resumida
+            st.warning(f"Total de equipamentos fora do padrão: {len(df_fora)}")
+
+            # Bar chart horizontal
+            fig_hbar = px.bar(
+                df_fora,
+                x="Media",
+                y="Equip_Label",
+                orientation="h",
+                title="Consumo dos Equipamentos Fora do Padrão (km/l)",
+                labels={"Media": "Consumo (km/l)", "Equip_Label": "Equipamento"}
             )
-            fig_alert.add_hline(
-                y=alerta_min,
-                line_dash='dash',
-                line_color='red',
-                annotation_text='Mínimo',
-                annotation_position='bottom right'
+            fig_hbar.update_layout(
+                height=600,
+                yaxis={"automargin": True}
             )
-            fig_alert.add_hline(
-                y=alerta_max,
-                line_dash='dash',
-                line_color='red',
-                annotation_text='Máximo',
-                annotation_position='top right'
-            )
-            st.plotly_chart(fig_alert, use_container_width=True)
+            st.plotly_chart(fig_hbar, use_container_width=True)
 
         # 4.1) Média por Classe Operacional
         media_op = df_f.groupby("Classe_Operacional")["Media"].mean().reset_index()
@@ -297,11 +292,11 @@ def main():
         fig2 = px.bar(
             agg, x="AnoMes", y="Qtde_Litros", text="Qtde_Litros",
             title="Consumo Mensal / Média",
-            labels={"Qtte_Litros": "Litros", "AnoMes": "Período"}
+            labels={"Qtde_Litros": "Litros", "AnoMes": "Período"}
         )
         fig2.update_traces(texttemplate="%{text:.1f}", textposition="outside")
         fig2.add_hline(
-            y=agg["Qtde_Litros"].mean(),
+            y=agg["Qtte_Litros"].mean() if "Qtte_Litros" in agg else agg["Qtde_Litros"].mean(),
             line_dash="dash", line_color="gray",
             annotation_text="Média Global", annotation_position="top left"
         )
