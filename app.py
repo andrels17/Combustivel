@@ -284,8 +284,12 @@ def main():
             annotation_text="Média Global", annotation_position="top left"
         )
         fig2.update_layout(
-            xaxis=dict(tickmode="array", tickvals=agg["AnoMes"],
-                       ticktext=agg["AnoMes"], tickangle=-45),
+            xaxis=dict(
+                tickmode="array",
+                tickvals=agg["AnoMes"],
+                ticktext=agg["AnoMes"],
+                tickangle=-45
+            ),
             updatemenus=[{
                 "buttons": [
                     {
@@ -301,7 +305,7 @@ def main():
                         "method": "update",
                         "args": [
                             {"y": ["Media"]},
-                            {"yaxis": {"title": "Média (km/l)"}}
+                            {"yaxis": {"title": "Média (km/l)"}}  
                         ]
                     }
                 ],
@@ -340,8 +344,14 @@ def main():
             title="Média de Consumo por Equipamento (Top 10)",
             labels={"Equip_Label": "Equipamento", "Media": "Média de Consumo (L)"}
         )
-        fig3.update_traces(textposition="outside", marker=dict(line=dict(color="black", width=0.5)))
-        fig3.update_layout(xaxis_tickangle=-45, margin=dict(l=20, r=20, t=50, b=80))
+        fig3.update_traces(
+            textposition="outside",
+            marker=dict(line=dict(color="black", width=0.5))
+        )
+        fig3.update_layout(
+            xaxis_tickangle=-45,
+            margin=dict(l=20, r=20, t=50, b=80)
+        )
         st.plotly_chart(fig3, use_container_width=True)
 
         # Exportar Top10 como PNG
@@ -356,22 +366,33 @@ def main():
 
     with tab2:
         st.header("📋 Tabela Detalhada")
+
+        # Configura estilo condicional via cellStyleRules (objeto JS)
+        cell_style_rules = {
+            'fora_padrao': {
+                'condition': f'x.value < {alerta_min} || x.value > {alerta_max}',
+                'style': {'backgroundColor': 'red', 'color': 'white'}
+            }
+        }
+
         gb = GridOptionsBuilder.from_dataframe(df_f)
         gb.configure_default_column(filterable=True, sortable=True, resizable=True)
-        # Condicional em Media
-        js_cond = f"""
-        function(params) {{
-            if (params.value < {alerta_min} || params.value > {alerta_max}) {{
-                return {{'color':'white','backgroundColor':'red'}};
-            }}
-            return null;
-        }}
-        """
-        gb.configure_column("Media", type=["numericColumn"], precision=1,
-                            cellStyle=js_cond, header_name="Média (L/km)")
-        gb.configure_column("Qtde_Litros", type=["numericColumn"], precision=1, header_name="Litros")
+        gb.configure_column(
+            "Media",
+            type=["numericColumn"],
+            precision=1,
+            cellStyleRules=cell_style_rules,
+            header_name="Média (L/km)"
+        )
+        gb.configure_column(
+            "Qtde_Litros",
+            type=["numericColumn"],
+            precision=1,
+            header_name="Litros"
+        )
         gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=10)
         gb.configure_selection(selection_mode="multiple", use_checkbox=True, groupSelectsChildren=True)
+
         grid_opts     = gb.build()
         grid_response = AgGrid(
             df_f,
@@ -380,6 +401,7 @@ def main():
             allow_unsafe_jscode=True,
             update_mode=GridUpdateMode.SELECTION_CHANGED
         )
+
         sel_rows = grid_response["selected_rows"]
         if sel_rows:
             df_sel = pd.DataFrame(sel_rows).drop("_selectedRowNodeInfo", axis=1, errors="ignore")
