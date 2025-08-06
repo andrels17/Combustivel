@@ -2,7 +2,7 @@ streamlit
 streamlit-aggrid
 pandas
 openpyxl
-plotly
+plotly>=5.7.0
 unidecode
 matplotlib
 kaleido>=0.2.1
