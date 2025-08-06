@@ -5,4 +5,4 @@ openpyxl
 plotly
 unidecode
 matplotlib
-kaleido
+kaleido==0.2.1
