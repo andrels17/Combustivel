@@ -7,10 +7,10 @@ from st_aggrid import AgGrid, GridOptionsBuilder
 
 # --------------- Configurações ---------------
 
-EXCEL_PATH = "Acompto_Abast.xlsx"
-SHEET_NAME = "BD"
-ALERTA_MIN = 1.5
-ALERTA_MAX = 5.0
+EXCEL_PATH  = "Acompto_Abast.xlsx"
+SHEET_NAME  = "BD"
+ALERTA_MIN  = 1.5
+ALERTA_MAX  = 5.0
 
 # --------------- Utilitários ---------------
 
@@ -29,7 +29,7 @@ def load_data(path: str, sheet: str) -> pd.DataFrame:
     Carrega e prepara o DataFrame:
      - Lê Excel, renomeia colunas
      - Converte Data
-     - Extrai mês e semana corretamente
+     - Extrai mês e semana
      - Gera colunas Ano, AnoMes, AnoSemana
      - Converte numéricos
      - Define Fazenda
@@ -52,18 +52,18 @@ def load_data(path: str, sheet: str) -> pd.DataFrame:
     df = df[df["Data"].notna()]
 
     # Extrai mês (1–12) e semana ISO (1–53)
-    df["Mes"] = df["Data"].dt.month
-    df["Semana"] = df["Data"].dt.isocalendar().week
+    df["Mes"]     = df["Data"].dt.month
+    df["Semana"]  = df["Data"].dt.isocalendar().week
 
     # Períodos auxiliares
-    df["Ano"] = df["Data"].dt.year
-    df["AnoMes"] = df["Data"].dt.to_period("M").astype(str)
+    df["Ano"]      = df["Data"].dt.year
+    df["AnoMes"]   = df["Data"].dt.to_period("M").astype(str)
     df["AnoSemana"] = df["Data"].dt.strftime("%Y-%U")
 
     # Converte colunas numéricas
     df["Qtde_Litros"] = pd.to_numeric(df["Qtde_Litros"], errors="coerce")
-    df["Media"] = pd.to_numeric(df["Media"], errors="coerce")
-    df["Media_P"] = pd.to_numeric(df["Media_P"], errors="coerce")
+    df["Media"]       = pd.to_numeric(df["Media"], errors="coerce")
+    df["Media_P"]     = pd.to_numeric(df["Media_P"], errors="coerce")
 
     # Define Fazenda
     df["Fazenda"] = df["Ref1"].astype(str)
@@ -157,7 +157,7 @@ def calcular_kpis(df: pd.DataFrame) -> dict:
     delta = fim - inicio
     prev = df[(df["Data"] >= inicio - delta) & (df["Data"] < inicio)]
     prev_litros = prev["Qtde_Litros"].sum() or 1
-    delta_pct = (total_litros - prev_litros) / prev_litros * 100
+    delta_pct   = (total_litros - prev_litros) / prev_litros * 100
 
     return {
         "total_litros":     total_litros,
@@ -165,6 +165,69 @@ def calcular_kpis(df: pd.DataFrame) -> dict:
         "eqp_unicos":       eqp_unicos,
         "delta_litros_pct": delta_pct
     }
+
+# --------------- App ---------------
+
+st.title("Dashboard de Consumo de Combustível")
+
+# Carrega e filtra dados
+df           = load_data(EXCEL_PATH, SHEET_NAME)
+opcoes       = sidebar_filters(df)
+df_filtrado  = filtrar_dados(df, opcoes)
+
+# Exibe KPIs
+kpis = calcular_kpis(df_filtrado)
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Litros Consumidos", formatar_brasileiro(kpis["total_litros"]))
+col2.metric("Média de Consumo", formatar_brasileiro(kpis["media_consumo"]))
+col3.metric("Equipamentos Únicos", kpis["eqp_unicos"])
+col4.metric("Variação Litros (%)", f"{kpis['delta_litros_pct']:.1f}%")
+
+st.markdown("---")
+
+#  Gráfico: Média de Consumo por Equipamento
+dados_plot = (
+    df_filtrado
+    .groupby(["Cod_Equip", "Descricao_Equip"])["Media"]
+    .mean()
+    .reset_index()
+)
+
+# Rótulo combinado e arredondamento
+dados_plot["Equip_Label"] = (
+    dados_plot["Cod_Equip"].astype(str)
+    + " - "
+    + dados_plot["Descricao_Equip"]
+)
+dados_plot["Media"] = dados_plot["Media"].round(1)
+dados_plot = dados_plot.sort_values("Media", ascending=False)
+
+# Cria gráfico de barras
+fig = px.bar(
+    dados_plot,
+    x="Equip_Label",
+    y="Media",
+    text="Media",
+    title="Média de Consumo por Equipamento",
+    labels={
+        "Equip_Label": "Equipamento",
+        "Media": "Média de Consumo (L)"
+    }
+)
+
+fig.update_traces(
+    textposition="outside",
+    marker=dict(line=dict(color="black", width=0.5))
+)
+fig.update_layout(
+    xaxis_tickangle=-45,
+    margin=dict(l=20, r=20, t=50, b=80),
+    yaxis=dict(title="Média de Consumo (L)")
+)
+
+# Exibe no Streamlit
+st.plotly_chart(fig, use_container_width=True)
+st.markdown("---")
 
 # --------------- Montagem do Dashboard ---------------
 
