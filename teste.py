@@ -366,71 +366,75 @@ def main():
             }
         )
 
-with tab2:
-    st.header("📋 Tabela Detalhada")
-
-    # Configurações do Grid
-    gb = GridOptionsBuilder.from_dataframe(df_f)
-    gb.configure_default_column(filterable=True, sortable=True, resizable=True)
-
-    # cellStyle simplificado (sem quebras de linha)
-    js_cond = (
-        f"function(params) {{"
-        f"  if (params.value < {alerta_min} || params.value > {alerta_max}) {{"
-        f"    return {{color: 'white', backgroundColor: 'red'}};"
-        f"  }}"
-        f"  return null;"
-        f"}}"
-    )
-    gb.configure_column(
-        "Media",
-        type=["numericColumn"],
-        precision=1,
-        cellStyle=js_cond,
-        header_name="Média (L/km)"
-    )
-    gb.configure_column(
-        "Qtde_Litros",
-        type=["numericColumn"],
-        precision=1,
-        header_name="Litros"
-    )
-    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=10)
-    gb.configure_selection(
-        selection_mode="multiple",
-        use_checkbox=True,
-        groupSelectsChildren=True
-    )
-
-    grid_opts = gb.build()
-
-    # Renderiza com key para evitar mismatch
-    try:
-        grid_response = AgGrid(
-            df_f,
-            gridOptions=grid_opts,
-            height=400,
-            allow_unsafe_jscode=True,
-            update_mode=GridUpdateMode.SELECTION_CHANGED,
-            key="table_1"
+    # --- Aba de Tabela ---
+    with tab2:
+        st.header("📋 Tabela Detalhada")
+    
+        # Configurações do Grid
+        gb = GridOptionsBuilder.from_dataframe(df_f)
+        gb.configure_default_column(filterable=True, sortable=True, resizable=True)
+    
+        # cellStyle simplificado (sem quebras de linha)
+        js_cond = (
+            f"function(params) {{"
+            f"  if (params.value < {alerta_min} || params.value > {alerta_max}) {{"
+            f"    return {{color: 'white', backgroundColor: 'red'}};"
+            f"  }}"
+            f"  return null;"
+            f"}}"
         )
-    except Exception as e:
-        st.error(f"Não foi possível renderizar a tabela: {e}")
-        return
+        gb.configure_column(
+            "Media",
+            type=["numericColumn"],
+            precision=1,
+            cellStyle=js_cond,
+            header_name="Média (L/km)"
+        )
+        gb.configure_column(
+            "Qtde_Litros",
+            type=["numericColumn"],
+            precision=1,
+            header_name="Litros"
+        )
+        gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=10)
+        gb.configure_selection(
+            selection_mode="multiple",
+            use_checkbox=True,
+            groupSelectsChildren=True
+        )
+    
+        grid_opts = gb.build()
+    
+        # Renderiza com key para evitar mismatch
+        try:
+            grid_response = AgGrid(
+                df_f,
+                gridOptions=grid_opts,
+                height=400,
+                allow_unsafe_jscode=True,
+                update_mode=GridUpdateMode.SELECTION_CHANGED,
+                key="table_1"
+            )
+        except Exception as e:
+            st.error(f"Não foi possível renderizar a tabela: {e}")
+            return
+    
+        sel_rows = grid_response["selected_rows"]
+        if sel_rows:
+            df_sel = (
+                pd.DataFrame(sel_rows)
+                  .drop("_selectedRowNodeInfo", axis=1, errors="ignore")
+            )
+            st.write(f"Linhas selecionadas: {len(df_sel)}")
+            csv_sel = df_sel.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "⬇️ Baixar selecionadas",
+                data=csv_sel,
+                file_name="selecionadas.csv",
+                mime="text/csv",
+                key="download_selected"
+            )
+    
 
-    sel_rows = grid_response["selected_rows"]
-    if sel_rows:
-        df_sel = (
-            pd.DataFrame(sel_rows)
-              .drop("_selectedRowNodeInfo", axis=1, errors="ignore")
-        )
-        st.write(f"Linhas selecionadas: {len(df_sel)}")
-        csv_sel = df_sel.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "⬇️ Baixar selecionadas",
-            data=csv_sel,
-            file_name="selecionadas.csv",
-            mime="text/csv",
-            key="download_selected"
-        )
+if __name__ == "__main__":
     main()
