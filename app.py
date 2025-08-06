@@ -224,6 +224,40 @@ def main():
         fig2.update_layout(xaxis_tickangle=-45, height=450)
         st.plotly_chart(fig2, use_container_width=True)
 
+        
+        # Gráfico: Top 10 equipamentos por consumo
+        top10 = df_f.groupby("Cod_Equip")["Qtde_Litros"].sum().nlargest(10).index
+        trend = (
+            df_f[df_f["Cod_Equip"].isin(top10)]
+                .groupby(["Cod_Equip", "Descricao_Equip"])["Media"].mean()
+                .reset_index()
+                .sort_values("Media", ascending=False)
+        )
+        trend["Equip_Label"] = trend.apply(
+            lambda r: f"{r['Cod_Equip']} - {r['Descricao_Equip']}", axis=1
+        )
+        trend["Media"] = trend["Media"].round(1)
+
+        fig3 = px.bar(
+            trend, x="Equip_Label", y="Media", text="Media",
+            title="Média de Consumo por Equipamento (Top 10)",
+            labels={"Equip_Label": "Equipamento", "Media": "Média (km/l)"}
+        )
+        fig3.update_traces(textposition="outside", marker=dict(line=dict(color="black", width=0.5)))
+        fig3.update_layout(xaxis_tickangle=-45, margin=dict(l=20, r=20, t=50, b=80))
+        st.plotly_chart(fig3, use_container_width=True)
+
+        # Download do Top 10
+        @st.cache_data
+        def get_fig3_png(fig):
+            return fig.to_image(format="png")
+        img_bytes = get_fig3_png(fig3)
+        st.download_button(
+            "📷 Exportar Top10 (PNG)",
+            data=img_bytes, file_name="top10.png", mime="image/png",
+            key="download_top10"
+        )
+
         # 3) Comparativo consumo acumulado por safra
         st.header("📈 Comparativo de Consumo Acumulado por Safra")
         safras_disp = sorted(df["Safra"].dropna().unique())
