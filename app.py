@@ -16,6 +16,10 @@ PALETTE_DARK = px.colors.sequential.Plasma_r
 # Classes que serão agrupadas em "Outros"
 OUTROS_CLASSES = {"Motocicletas", "Mini Carregadeira", "Usina", "Veiculos Leves"}
 
+# Possíveis nomes de colunas para hodômetro e horímetro — atualize se necessário
+HODOMETRO_COLS = ["HODOMETRO", "Hodometro", "Km_Atual", "KM", "Km", "KmAtual", "Km_Atual"]
+HORIMETRO_COLS = ["HORIMETRO", "Horimetro", "Hr_Atual", "Horas", "Horimetro_Horas", "Horimetros"]
+
 # ---------------- Utilitários ----------------
 def formatar_brasileiro(valor: float) -> str:
     """Formata número no padrão brasileiro com duas casas decimais."""
@@ -24,12 +28,18 @@ def formatar_brasileiro(valor: float) -> str:
     return "{:,.2f}".format(valor).replace(",", "X").replace(".", ",").replace("X", ".")
 
 def wrap_labels(s: str, width: int = 18) -> str:
-    """Quebra um rótulo em múltiplas linhas usando <br> para Plotly.
-    width: número aproximado de caracteres por linha antes de quebrar."""
+    """Quebra um rótulo em múltiplas linhas usando <br> para Plotly."""
     if pd.isna(s):
         return ""
     parts = textwrap.wrap(str(s), width=width)
     return "<br>".join(parts) if parts else str(s)
+
+def find_first_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    """Retorna o primeiro nome de coluna existente em df a partir da lista de candidatos."""
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
 
 @st.cache_data(show_spinner="Carregando e processando dados...")
 def load_data(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -53,9 +63,9 @@ def load_data(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     df_frotas["label"] = (
         df_frotas["Cod_Equip"].astype(str)
         + " - "
-        + df_frotas["DESCRICAO_EQUIPAMENTO"].fillna("")
+        + df_frotas.get("DESCRICAO_EQUIPAMENTO", "").fillna("")
         + " ("
-        + df_frotas["PLACA"].fillna("Sem Placa")
+        + df_frotas.get("PLACA", "").fillna("Sem Placa")
         + ")"
     )
 
@@ -88,11 +98,9 @@ def load_data(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     df["DESCRICAOMARCA"] = df["Ref2"].astype(str)
     df["Fazenda"] = df["Ref1"].astype(str)
 
-    # --- Cálculo seguro de Consumo km/l ---
-    # Usa Km_Hs_Rod (km) e Qtde_Litros (litros). Se Qtde_Litros <= 0, coloca NaN.
+    # Cálculo seguro de Consumo km/l
     if "Km_Hs_Rod" in df.columns and "Qtde_Litros" in df.columns:
         df["Consumo_km_l"] = np.where(df["Qtde_Litros"] > 0, df["Km_Hs_Rod"] / df["Qtde_Litros"], np.nan)
-        # Sobrescreve 'Media' para manter compatibilidade com o restante do código
         df["Media"] = df["Consumo_km_l"]
     else:
         df["Consumo_km_l"] = np.nan
@@ -101,8 +109,7 @@ def load_data(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 @st.cache_data
 def filtrar_dados(df: pd.DataFrame, opts: dict) -> pd.DataFrame:
-    """Filtra o DataFrame conforme opções selecionadas.
-    OBS: filtro de Marca foi removido conforme solicitado."""
+    """Filtra o DataFrame conforme opções selecionadas (sem filtro de marca)."""
     mask = (
         df["Safra"].isin(opts["safras"]) &
         df["Ano"].isin(opts["anos"]) &
@@ -120,30 +127,27 @@ def calcular_kpis_consumo(df: pd.DataFrame) -> dict:
         "eqp_unicos": int(df["Cod_Equip"].nunique()) if "Cod_Equip" in df.columns else 0,
     }
 
-def make_bar(fig_df, x, y, title, labels, palette, rotate_x=-45, ticksize=10, height=None, hoverfmt=None, wrap_width=18):
-    """Helper para criar barras padronizadas com hovertemplate e rótulos de X legíveis.
-    - rotate_x: ângulo dos ticks (ex: -45)
-    - ticksize: tamanho da fonte dos ticks
-    - wrap_width: se labels são longos, quebra após esse nº de caracteres
-    """
-    # Se formos usar labels longas (equipamentos/classe), aplicamos wrap
+def make_bar(fig_df, x, y, title, labels, palette, rotate_x=-60, ticksize=10, height=None, hoverfmt=None, wrap_width=18, hide_text_if_gt=8):
+    """Helper para criar barras padronizadas com hovertemplate e rótulos de X legíveis."""
     df_local = fig_df.copy()
     if x in df_local.columns:
         df_local[x] = df_local[x].astype(str).apply(lambda s: wrap_labels(s, width=wrap_width))
 
     fig = px.bar(df_local, x=x, y=y, text=y, title=title, labels=labels, color_discrete_sequence=palette)
-    # texto das barras menor para não sobrepor
-    fig.update_traces(textposition="outside", texttemplate="%{text:.1f}", textfont=dict(size=10))
-    # layout do eixo X para legibilidade
+    # decide mostrar texto nas barras dependendo do número de categorias
+    if df_local.shape[0] > hide_text_if_gt:
+        fig.update_traces(texttemplate=None)
+    else:
+        fig.update_traces(texttemplate="%{text:.1f}", textfont=dict(size=10))
+
     fig.update_layout(
         xaxis=dict(tickangle=rotate_x, tickfont=dict(size=ticksize), automargin=True),
-        margin=dict(l=40, r=20, t=60, b=140),  # aumenta bottom para espaço de rótulos
+        margin=dict(l=40, r=20, t=60, b=160),
         title=dict(x=0.01, xanchor="left"),
         font=dict(size=13)
     )
     if height:
         fig.update_layout(height=height)
-    # hovertemplate customizado
     if hoverfmt:
         fig.update_traces(hovertemplate=hoverfmt)
     else:
@@ -153,7 +157,6 @@ def make_bar(fig_df, x, y, title, labels, palette, rotate_x=-45, ticksize=10, he
 # ---------------- Layout / CSS moderno ----------------
 def apply_modern_css(dark: bool):
     """Aplica CSS leve para um visual mais moderno."""
-    # notas: CSS inline para melhorar títulos e KPIs
     bg = "#0e1117" if dark else "#FFFFFF"
     card_bg = "#111318" if dark else "#f8f9fa"
     text_color = "#f0f0f0" if dark else "#111111"
@@ -179,6 +182,72 @@ def apply_modern_css(dark: bool):
         unsafe_allow_html=True
     )
 
+# ---------------- Manutenção: lógica ----------------
+def detect_odometer_and_hourmeter(df_frotas: pd.DataFrame, df_abast: pd.DataFrame):
+    """Encontra colunas reais usadas para hodômetro/horímetro e constrói colunas consolidadas."""
+    hod_col = find_first_column(df_frotas, HODOMETRO_COLS)
+    hr_col = find_first_column(df_frotas, HORIMETRO_COLS)
+
+    # Se não achar em frotas, tenta extrair do histórico (abastecimento) usando Km_Hs_Rod como fallback
+    if hod_col is None and "Km_Hs_Rod" in df_abast.columns:
+        hod_col = "Km_Hs_Rod_from_abast"
+        # pega o último registro por equipamento como estimativa
+        last_km = df_abast.sort_values(["Cod_Equip", "Data"]).groupby("Cod_Equip")["Km_Hs_Rod"].last().rename("Km_current_from_abast")
+        # retornaremos um Series para merge externo quando usado
+        return hod_col, hr_col, last_km
+    return hod_col, hr_col, None
+
+def build_maintenance_table(df_frotas: pd.DataFrame, last_km_series: pd.Series | None,
+                            km_interval_default: int, hr_interval_default: int,
+                            class_intervals: dict[str, dict]):
+    """Constrói tabela com próximos serviços/lubrificação.
+    - class_intervals: dict[class_name] = {"km": int or None, "hr": int or None}
+    """
+    # base: df_frotas copy
+    mf = df_frotas.copy()
+    # tenta obter hodometro e horimetro atuais das colunas encontradas
+    hod_col = find_first_column(mf, HODOMETRO_COLS)
+    hr_col = find_first_column(mf, HORIMETRO_COLS)
+
+    if hod_col and hod_col in mf.columns:
+        mf["Km_Current"] = pd.to_numeric(mf[hod_col], errors="coerce")
+    elif last_km_series is not None:
+        # merge last_km_series by Cod_Equip (index)
+        mf = mf.set_index("Cod_Equip")
+        mf["Km_Current"] = last_km_series.reindex(mf.index)
+        mf = mf.reset_index()
+    else:
+        mf["Km_Current"] = np.nan
+
+    if hr_col and hr_col in mf.columns:
+        mf["Hr_Current"] = pd.to_numeric(mf[hr_col], errors="coerce")
+    else:
+        mf["Hr_Current"] = np.nan
+
+    # define intervalos por equipamento (classes)
+    def get_interval(row, kind):
+        cls = row.get("Classe_Operacional", "")
+        if cls in class_intervals and class_intervals[cls].get(kind) is not None:
+            return class_intervals[cls].get(kind)
+        return km_interval_default if kind == "km" else hr_interval_default
+
+    # construir próximas manutenções
+    mf["Km_Service_Interval"] = mf.apply(lambda r: get_interval(r, "km"), axis=1)
+    mf["Hr_Service_Interval"] = mf.apply(lambda r: get_interval(r, "hr"), axis=1)
+
+    # estas colunas assumem que exista um "Km_Last_Service" / "Hr_Last_Service" — se não, aproximamos
+    # Aqui fazemos o cálculo simplificado: se não houver Km_Last_Service, assumimos próxima em Km_Current + interval
+    # Você pode adaptar para usar uma coluna de "Km_Ultima_Revisao" se existir.
+    mf["Km_Next_Service"] = np.where(mf["Km_Current"].notna(), mf["Km_Current"] + mf["Km_Service_Interval"], np.nan)
+    mf["Km_To_Service"] = mf["Km_Next_Service"] - mf["Km_Current"]
+
+    mf["Hr_Next_Oil"] = np.where(mf["Hr_Current"].notna(), mf["Hr_Current"] + mf["Hr_Service_Interval"], np.nan)
+    mf["Hr_To_Oil"] = mf["Hr_Next_Oil"] - mf["Hr_Current"]
+
+    # flags: due within threshold (e.g., dentro de X km/hrs)
+    # Para visualização default, marcar como "próximo" se faltar <= 500 km ou <= 20 horas (ajustáveis no sidebar)
+    return mf
+
 # ---------------- App principal ----------------
 def main():
     st.set_page_config(page_title="Dashboard de Frotas e Abastecimentos", layout="wide")
@@ -187,7 +256,7 @@ def main():
     # Carrega dados
     df, df_frotas = load_data(EXCEL_PATH)
 
-    # Sidebar: tema e filtros
+    # Sidebar: tema e filtros e controles de manutenção
     with st.sidebar:
         st.header("Configurações")
         dark_mode = st.checkbox("🕶️ Dark Mode (aplica visual escuro)", value=False)
@@ -198,6 +267,19 @@ def main():
             st.session_state.clear()
             st.rerun()
 
+        st.markdown("---")
+        st.header("📈 Visual")
+        top_n = st.slider("Número de categorias (Top N) antes de agrupar em 'Outros'", min_value=3, max_value=30, value=10)
+        hide_text_threshold = st.slider("Esconder valores nas barras quando categorias > ", min_value=5, max_value=40, value=8)
+
+        st.markdown("---")
+        st.header("🔧 Manutenção & Lubrificação")
+        st.markdown("Defina intervalos padrão (por km e por horas). Você pode também definir intervalos por classe na aba Configurações.")
+        km_interval_default = st.number_input("Intervalo padrão (km) para revisão", min_value=100, max_value=200000, value=10000, step=100)
+        hr_interval_default = st.number_input("Intervalo padrão (horas) para lubrificação", min_value=1, max_value=5000, value=250, step=1)
+        km_due_threshold = st.number_input("Alerta para revisão se faltar <= (km)", min_value=10, max_value=5000, value=500, step=10)
+        hr_due_threshold = st.number_input("Alerta para lubrificação se faltar <= (horas)", min_value=1, max_value=500, value=20, step=1)
+
     # Aplica CSS leve
     apply_modern_css(dark_mode)
 
@@ -205,21 +287,18 @@ def main():
     palette = PALETTE_DARK if dark_mode else PALETTE_LIGHT
     plotly_template = "plotly_dark" if dark_mode else "plotly"
 
-    # Filtro (função reorganizada para UX moderno) - **sem filtro de marca**
+    # Filtro (sem filtro de marca)
     def sidebar_filters_local(df: pd.DataFrame) -> dict:
-        # Defaults defensivos
         safra_opts = sorted(df["Safra"].dropna().unique()) if "Safra" in df.columns else []
         ano_opts = sorted(df["Ano"].dropna().unique()) if "Ano" in df.columns else []
         classe_opts = sorted(df["Classe_Operacional"].dropna().unique()) if "Classe_Operacional" in df.columns else []
 
-        # Seletores
         sel_safras = st.sidebar.multiselect("Safra", safra_opts, default=safra_opts[-1:] if safra_opts else [])
         sel_anos = st.sidebar.multiselect("Ano", ano_opts, default=ano_opts[-1:] if ano_opts else [])
         sel_meses = st.sidebar.multiselect("Mês (num)", sorted(df["Mes"].dropna().unique()) if "Mes" in df.columns else [], default=[datetime.now().month])
         st.sidebar.markdown("---")
         sel_classes = st.sidebar.multiselect("Classe Operacional", classe_opts, default=classe_opts)
 
-        # Garantias: se vazio, usa todos
         if not sel_safras:
             sel_safras = safra_opts
         if not sel_anos:
@@ -240,27 +319,25 @@ def main():
     df_f = filtrar_dados(df, opts)
 
     # Abas
-    tab_principal, tab_consulta, tab_tabela, tab_config = st.tabs([
+    tab_principal, tab_consulta, tab_tabela, tab_config, tab_manut = st.tabs([
         "📊 Análise de Consumo",
         "🔎 Consulta de Frota",
         "📋 Tabela Detalhada",
-        "⚙️ Configurações"
+        "⚙️ Configurações",
+        "🛠️ Manutenção"
     ])
 
     # ----- Aba Principal -----
     with tab_principal:
-        # Se não tem dados
         if df_f.empty:
             st.warning("Sem dados para os filtros selecionados.")
             st.stop()
 
-        # Cabeçalho com KPIs destacados
         kpis = calcular_kpis_consumo(df_f)
         total_eq = df_frotas.shape[0]
         ativos = int(df_frotas.query("ATIVO == 'ATIVO'").shape[0]) if "ATIVO" in df_frotas.columns else 0
         idade_media = (datetime.now().year - df_frotas["ANOMODELO"].median()) if "ANOMODELO" in df_frotas.columns else 0
 
-        # KPI cards (light premium style)
         k1, k2, k3, k4 = st.columns([1.6,1.6,1.4,1.4])
         with k1:
             st.markdown(
@@ -290,77 +367,88 @@ def main():
         st.markdown("### ")
         st.info(f"🔍 {len(df_f):,} registros após aplicação dos filtros")
 
-        # Gráfico 1 - Média por Classe Operacional (usando Media = km/l)
-        # Primeiro, agrupa algumas classes em "Outros"
-        df_plot = df_f.copy()
-        # preencher NaNs com string padrao para evitar problemas
-        df_plot["Classe_Operacional"] = df_plot["Classe_Operacional"].fillna("Sem Classe")
-        df_plot["Classe_Grouped"] = df_plot["Classe_Operacional"].apply(lambda s: "Outros" if s in OUTROS_CLASSES else s)
+        # --- prepara df para plot com agrupamento Outras classes + top N logic ---
+        df_plot_source = df_f.copy()
+        df_plot_source["Classe_Operacional"] = df_plot_source["Classe_Operacional"].fillna("Sem Classe")
+        # agrupa classes especificadas em OUTROS_CLASSES para limpeza inicial
+        df_plot_source["Classe_Grouped"] = df_plot_source["Classe_Operacional"].apply(lambda s: "Outros" if s in OUTROS_CLASSES else s)
 
-        media_op = df_plot.groupby("Classe_Grouped")["Media"].mean().reset_index()
-        media_op["Media"] = media_op["Media"].round(1)
+        # calcula média por classe agrupada
+        media_op_full = df_plot_source.groupby("Classe_Grouped")["Media"].mean().reset_index()
+        media_op_full["Media"] = media_op_full["Media"].round(1)
 
-        # Ordena por média descendente, mas força "Outros" para o final (se existir)
-        outros_row = media_op[media_op["Classe_Grouped"] == "Outros"]
-        media_op = media_op[media_op["Classe_Grouped"] != "Outros"].sort_values("Media", ascending=False)
-        if not outros_row.empty:
-            media_op = pd.concat([media_op, outros_row], ignore_index=True)
+        # agora aplica top_n: manter top_n maiores por média, o resto vira "Outros"
+        media_sorted = media_op_full.sort_values("Media", ascending=False).reset_index(drop=True)
+        if media_sorted.shape[0] > top_n:
+            top_keep = media_sorted.head(top_n)["Classe_Grouped"].tolist()
+            # marca resto como Outros
+            df_plot_source["Classe_TopN"] = df_plot_source["Classe_Grouped"].apply(lambda s: s if s in top_keep else "Outros")
+            media_op = df_plot_source.groupby("Classe_TopN")["Media"].mean().reset_index().rename(columns={"Classe_TopN":"Classe_Grouped"})
+            media_op["Media"] = media_op["Media"].round(1)
+            # forçar order: top by média then Outros last
+            outros_row = media_op[media_op["Classe_Grouped"] == "Outros"]
+            media_op = media_op[media_op["Classe_Grouped"] != "Outros"].sort_values("Media", ascending=False)
+            if not outros_row.empty:
+                media_op = pd.concat([media_op, outros_row], ignore_index=True)
+        else:
+            media_op = media_sorted
 
-        # aplica wrap nas labels para a legibilidade do eixo X
-        media_op["Classe_wrapped"] = media_op["Classe_Grouped"].astype(str).apply(lambda s: wrap_labels(s, width=18))
+        # wrapped labels
+        media_op["Classe_wrapped"] = media_op["Classe_Grouped"].astype(str).apply(lambda s: wrap_labels(s, width=16))
 
+        # plot
         hover_template_media = "Classe: %{x}<br>Média: %{y:.1f} km/l<extra></extra>"
         fig1 = make_bar(media_op, "Classe_wrapped", "Media",
                         "Média de Consumo por Classe Operacional",
                         {"Media": "Média (km/l)", "Classe_wrapped": "Classe"},
-                        palette, rotate_x=-45, ticksize=10, height=520, hoverfmt=hover_template_media, wrap_width=18)
+                        palette, rotate_x=-60, ticksize=10, height=520, hoverfmt=hover_template_media, wrap_width=16, hide_text_if_gt=hide_text_threshold)
         fig1.update_traces(marker_line_width=0.3)
         fig1.update_layout(template=plotly_template)
         st.plotly_chart(fig1, use_container_width=True, theme=None)
 
-        # Gráfico 2 - Consumo Mensal
+        # Gráfico 2 e 3 (consumo mensal e top10) mantidos — ajustando para esconder textos se necessário
         agg = df_f.groupby("AnoMes")["Qtde_Litros"].mean().reset_index()
-        agg["Mes"] = pd.to_datetime(agg["AnoMes"] + "-01").dt.strftime("%b %Y")
-        agg["Qtde_Litros"] = agg["Qtde_Litros"].round(1)
-        hover_template_month = "Mês: %{x}<br>Litros: %{y:.1f} L<extra></extra>"
-        fig2 = make_bar(agg, "Mes", "Qtde_Litros", "Consumo Mensal", {"Qtde_Litros": "Litros", "Mes": "Mês"}, palette, rotate_x=-45, ticksize=10, height=420, hoverfmt=hover_template_month)
-        fig2.update_layout(template=plotly_template)
-        st.plotly_chart(fig2, use_container_width=True, theme=None)
+        if not agg.empty:
+            agg["Mes"] = pd.to_datetime(agg["AnoMes"] + "-01").dt.strftime("%b %Y")
+            agg["Qtde_Litros"] = agg["Qtde_Litros"].round(1)
+            hover_template_month = "Mês: %{x}<br>Litros: %{y:.1f} L<extra></extra>"
+            fig2 = make_bar(agg, "Mes", "Qtde_Litros", "Consumo Mensal", {"Qtde_Litros": "Litros", "Mes": "Mês"}, palette, rotate_x=-45, ticksize=10, height=420, hoverfmt=hover_template_month, hide_text_if_gt=hide_text_threshold)
+            fig2.update_layout(template=plotly_template)
+            st.plotly_chart(fig2, use_container_width=True, theme=None)
 
-        # Gráfico 3 - Top 10 Equipamentos por consumo total (mostra média de consumo)
-        top10 = df_f.groupby("Cod_Equip")["Qtde_Litros"].sum().nlargest(10).index
-        trend = (
-            df_f[df_f["Cod_Equip"].isin(top10)]
-            .groupby(["Cod_Equip", "Descricao_Equip"])["Media"].mean()
-            .reset_index()
-            .sort_values("Media", ascending=False)
-        )
-        if not trend.empty:
-            # cria label amigável e wrapped
-            trend["Equip_Label"] = trend.apply(lambda r: f"{r['Cod_Equip']} - {r['Descricao_Equip']}", axis=1)
-            trend["Equip_Label_wrapped"] = trend["Equip_Label"].apply(lambda s: wrap_labels(s, width=18))
-            trend["Media"] = trend["Media"].round(1)
-            hover_template_top = "Equipamento: %{x}<br>Média: %{y:.1f} km/l<extra></extra>"
-            fig3 = make_bar(trend, "Equip_Label_wrapped", "Media", "Média de Consumo por Equipamento (Top 10)",
-                            {"Equip_Label_wrapped": "Equipamento", "Media": "Média (km/l)"},
-                            palette, rotate_x=-45, ticksize=10, height=420, hoverfmt=hover_template_top, wrap_width=18)
-            fig3.update_traces(marker_line=dict(color="#000000", width=0.5))
-            fig3.update_layout(template=plotly_template)
-            st.plotly_chart(fig3, use_container_width=True, theme=None)
+        # Top10 equipamentos por Qtde_Litros total (mas mostra média de consumo)
+        if "Cod_Equip" in df_f.columns and "Qtde_Litros" in df_f.columns:
+            top10 = df_f.groupby("Cod_Equip")["Qtde_Litros"].sum().nlargest(10).index
+            trend = (
+                df_f[df_f["Cod_Equip"].isin(top10)]
+                .groupby(["Cod_Equip", "Descricao_Equip"])["Media"].mean()
+                .reset_index()
+                .sort_values("Media", ascending=False)
+            )
+            if not trend.empty:
+                trend["Equip_Label"] = trend.apply(lambda r: f"{r['Cod_Equip']} - {r['Descricao_Equip']}", axis=1)
+                trend["Equip_Label_wrapped"] = trend["Equip_Label"].apply(lambda s: wrap_labels(s, width=18))
+                trend["Media"] = trend["Media"].round(1)
+                hover_template_top = "Equipamento: %{x}<br>Média: %{y:.1f} km/l<extra></extra>"
+                fig3 = make_bar(trend, "Equip_Label_wrapped", "Media", "Média de Consumo por Equipamento (Top 10)",
+                                {"Equip_Label_wrapped": "Equipamento", "Media": "Média (km/l)"},
+                                palette, rotate_x=-45, ticksize=10, height=420, hoverfmt=hover_template_top, hide_text_if_gt=hide_text_threshold)
+                fig3.update_traces(marker_line=dict(color="#000000", width=0.5))
+                fig3.update_layout(template=plotly_template)
+                st.plotly_chart(fig3, use_container_width=True, theme=None)
 
-            # Download do gráfico (quando suportado)
-            @st.cache_data(show_spinner=False)
-            def get_fig_png(fig):
-                return fig.to_image(format="png", scale=2)
+                # export fig3 if environment supports
+                @st.cache_data(show_spinner=False)
+                def get_fig_png(fig):
+                    return fig.to_image(format="png", scale=2)
 
-            try:
-                img = get_fig_png(fig3)
-                st.download_button("📷 Exportar Top10 (PNG)", data=img, file_name="top10.png", mime="image/png")
-            except Exception:
-                # ambientes sem kaleido/plotly image export não quebram a execução
-                st.caption("Exportação de imagem não disponível no ambiente atual.")
+                try:
+                    img = get_fig_png(fig3)
+                    st.download_button("📷 Exportar Top10 (PNG)", data=img, file_name="top10.png", mime="image/png")
+                except Exception:
+                    st.caption("Exportação de imagem não disponível no ambiente atual.")
 
-        # Gráfico 4 - Consumo acumulado por safra (usa Qtde_Litros)
+        # Gráfico 4 - consumo acumulado por safra
         st.markdown("---")
         st.header("📈 Comparativo de Consumo Acumulado por Safra")
         safras = sorted(df["Safra"].dropna().unique())
@@ -376,7 +464,6 @@ def main():
                                color_discrete_sequence=palette)
             fig_acum.update_layout(title="Consumo Acumulado por Safra", margin=dict(l=20,r=20,t=50,b=50), template=plotly_template, font=dict(size=13))
             fig_acum.update_traces(hovertemplate=hover_template_acum)
-            # marcar valor atual da última safra selecionada
             ultima = sel_safras[-1]
             df_u = df_cmp[df_cmp["Safra"] == ultima]
             if not df_u.empty:
@@ -388,22 +475,19 @@ def main():
     # ----- Aba Consulta de Frota -----
     with tab_consulta:
         st.header("🔎 Ficha Individual do Equipamento")
-        # usa label pré-calculada
         equip_label = st.selectbox("Selecione o Equipamento", options=df_frotas.sort_values("Cod_Equip")["label"])
         if equip_label:
             cod_sel = int(equip_label.split(" - ")[0])
             dados_eq = df_frotas.query("Cod_Equip == @cod_sel").iloc[0]
             consumo_eq = df.query("Cod_Equip == @cod_sel").sort_values("Data", ascending=False)
 
-            st.subheader(f"{dados_eq['DESCRICAO_EQUIPAMENTO']} ({dados_eq.get('PLACA','–')})")
-            # KPIs por equipamento
+            st.subheader(f"{dados_eq.get('DESCRICAO_EQUIPAMENTO','–')} ({dados_eq.get('PLACA','–')})")
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Status", dados_eq.get("ATIVO", "–"))
             col2.metric("Placa", dados_eq.get("PLACA", "–"))
             col3.metric("Média Geral", formatar_brasileiro(consumo_eq["Media"].mean()))
             col4.metric("Total Consumido (L)", formatar_brasileiro(consumo_eq["Qtde_Litros"].sum()))
 
-            # Último registro e última safra
             if not consumo_eq.empty:
                 ultimo = consumo_eq.iloc[0]
                 km_hs = ultimo.get("Km_Hs_Rod", np.nan)
@@ -433,11 +517,9 @@ def main():
         cols = ["Data", "Cod_Equip", "Descricao_Equip", "PLACA", "DESCRICAOMARCA", "ANOMODELO", "Qtde_Litros", "Media", "Media_P", "Classe_Operacional"]
         df_tab = df[[c for c in cols if c in df.columns]]
 
-        # Export CSV rápido
         csv_bytes = df_tab.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Exportar CSV da Tabela", csv_bytes, "abastecimentos.csv", "text/csv")
 
-        # AgGrid com barra lateral
         gb = GridOptionsBuilder.from_dataframe(df_tab)
         gb.configure_default_column(filterable=True, sortable=True, resizable=True)
         if "Media" in df_tab.columns:
@@ -455,14 +537,75 @@ def main():
         st.header("⚙️ Padrões por Classe Operacional (Alertas)")
         if "thr" not in st.session_state:
             classes = df["Classe_Operacional"].dropna().unique() if "Classe_Operacional" in df.columns else []
-            st.session_state.thr = {cls: {"min": 1.5, "max": 5.0} for cls in classes}
+            # inicia com padrões básicos por classe (pode personalizar)
+            st.session_state.thr = {cls: {"min": 1.5, "max": 5.0, "km_interval": 10000, "hr_interval": 250} for cls in classes}
 
+        st.markdown("Personalize intervalo de manutenção por classe (opcional):")
         for cls in sorted(st.session_state.thr.keys()):
-            c_min, c_max = st.columns(2)
-            mn = c_min.number_input(f"{cls} → Mínimo (km/l)", min_value=0.0, max_value=100.0, value=st.session_state.thr[cls]["min"], step=0.1, key=f"min_{cls}")
-            mx = c_max.number_input(f"{cls} → Máximo (km/l)", min_value=0.0, max_value=100.0, value=st.session_state.thr[cls]["max"], step=0.1, key=f"max_{cls}")
+            cols = st.columns(3)
+            mn = cols[0].number_input(f"{cls} → Mínimo (km/l)", min_value=0.0, max_value=100.0, value=st.session_state.thr[cls]["min"], step=0.1, key=f"min_{cls}")
+            mx = cols[1].number_input(f"{cls} → Máximo (km/l)", min_value=0.0, max_value=100.0, value=st.session_state.thr[cls]["max"], step=0.1, key=f"max_{cls}")
+            kint = cols[2].number_input(f"{cls} → Intervalo revisão (km)", min_value=0, max_value=200000, value=st.session_state.thr[cls]["km_interval"], step=100, key=f"kmint_{cls}")
+            # guarda alterações
             st.session_state.thr[cls]["min"] = mn
             st.session_state.thr[cls]["max"] = mx
+            st.session_state.thr[cls]["km_interval"] = int(kint)
+            # hr interval como controle local (se quiser)
+            # opcional: adicionar horário por classe
+
+    # ----- Aba Manutenção -----
+    with tab_manut:
+        st.header("🛠️ Controle de Revisões e Lubrificação")
+        st.markdown("O sistema tenta identificar hodômetros/horímetros e calcular próximos serviços com base em intervalos padrão ou por classe.")
+
+        # detect colunas reais (e uma série fallback do histórico)
+        hod_col, hr_col, last_km_series = detect_odometer_and_hourmeter(df_frotas, df)
+
+        st.markdown(f"**Hodômetro encontrado em frotas:** `{hod_col}`" if hod_col else "**Hodômetro:** não encontrado diretamente nas colunas de frotas; usando histórico como fallback (Km_Hs_Rod).")
+        st.markdown(f"**Horímetro encontrado em frotas:** `{hr_col}`" if hr_col else "**Horímetro:** não encontrado.")
+
+        # montar dict de intervalos por classe a partir de st.session_state.thr, se existir
+        class_intervals = {}
+        if "thr" in st.session_state:
+            for cls, v in st.session_state.thr.items():
+                class_intervals[cls] = {"km": v.get("km_interval", None), "hr": v.get("hr_interval", None)}
+
+        mf = build_maintenance_table(df_frotas, last_km_series, int(km_interval_default), int(hr_interval_default), class_intervals)
+
+        # calcula flags de proximidade de manutenção
+        mf["Km_To_Service"] = mf["Km_Next_Service"] - mf["Km_Current"]
+        mf["Hr_To_Oil"] = mf["Hr_Next_Oil"] - mf["Hr_Current"]
+
+        mf["Due_Km"] = mf["Km_To_Service"].apply(lambda x: True if pd.notna(x) and x <= km_due_threshold else False)
+        mf["Due_Hr"] = mf["Hr_To_Oil"].apply(lambda x: True if pd.notna(x) and x <= hr_due_threshold else False)
+
+        # coluna combinada
+        mf["Any_Due"] = mf["Due_Km"] | mf["Due_Hr"]
+
+        # Tabela: equipamentos com manutenção próxima ou vencida
+        df_due = mf[mf["Any_Due"]].copy().sort_values(["Due_Km", "Due_Hr"], ascending=False)
+
+        st.subheader("Equipamentos com manutenção próxima/atrasada")
+        st.write(f"Total equipamentos com alerta: {len(df_due)}")
+        if not df_due.empty:
+            display_cols = ["Cod_Equip", "DESCRICAO_EQUIPAMENTO", "Km_Current", "Km_Next_Service", "Km_To_Service", "Hr_Current", "Hr_Next_Oil", "Hr_To_Oil", "Due_Km", "Due_Hr"]
+            available = [c for c in display_cols if c in df_due.columns]
+            st.dataframe(df_due[available].reset_index(drop=True), use_container_width=True)
+
+            # export CSV
+            csvm = df_due[available].to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Exportar CSV - Equipamentos em alerta", csvm, "manutencao_alerta.csv", "text/csv")
+        else:
+            st.info("Nenhum equipamento com alerta de manutenção dentro dos thresholds configurados.")
+
+        st.markdown("---")
+        st.subheader("Visão geral da frota (manutenção planejada)")
+        overview_cols = ["Cod_Equip", "DESCRICAO_EQUIPAMENTO", "Km_Current", "Km_Next_Service", "Km_Service_Interval", "Hr_Current", "Hr_Next_Oil", "Hr_Service_Interval"]
+        available_over = [c for c in overview_cols if c in mf.columns]
+        st.dataframe(mf[available_over].sort_values("Cod_Equip").reset_index(drop=True), use_container_width=True)
+
+        csv_over = mf[available_over].to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Exportar CSV - Plano de Manutenção (Visão Geral)", csv_over, "manutencao_overview.csv", "text/csv")
 
 if __name__ == "__main__":
     main()
