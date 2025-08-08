@@ -13,6 +13,9 @@ EXCEL_PATH = "Acompto_Abast.xlsx"
 PALETTE_LIGHT = px.colors.sequential.Blues_r
 PALETTE_DARK = px.colors.sequential.Plasma_r
 
+# Classes que serão agrupadas em "Outros"
+OUTROS_CLASSES = {"Motocicletas", "Mini Carregadeira", "Usina", "Veiculos Leves"}
+
 # ---------------- Utilitários ----------------
 def formatar_brasileiro(valor: float) -> str:
     """Formata número no padrão brasileiro com duas casas decimais."""
@@ -288,10 +291,24 @@ def main():
         st.info(f"🔍 {len(df_f):,} registros após aplicação dos filtros")
 
         # Gráfico 1 - Média por Classe Operacional (usando Media = km/l)
-        media_op = df_f.groupby("Classe_Operacional")["Media"].mean().reset_index()
+        # Primeiro, agrupa algumas classes em "Outros"
+        df_plot = df_f.copy()
+        # preencher NaNs com string padrao para evitar problemas
+        df_plot["Classe_Operacional"] = df_plot["Classe_Operacional"].fillna("Sem Classe")
+        df_plot["Classe_Grouped"] = df_plot["Classe_Operacional"].apply(lambda s: "Outros" if s in OUTROS_CLASSES else s)
+
+        media_op = df_plot.groupby("Classe_Grouped")["Media"].mean().reset_index()
         media_op["Media"] = media_op["Media"].round(1)
+
+        # Ordena por média descendente, mas força "Outros" para o final (se existir)
+        outros_row = media_op[media_op["Classe_Grouped"] == "Outros"]
+        media_op = media_op[media_op["Classe_Grouped"] != "Outros"].sort_values("Media", ascending=False)
+        if not outros_row.empty:
+            media_op = pd.concat([media_op, outros_row], ignore_index=True)
+
         # aplica wrap nas labels para a legibilidade do eixo X
-        media_op["Classe_wrapped"] = media_op["Classe_Operacional"].astype(str).apply(lambda s: wrap_labels(s, width=18))
+        media_op["Classe_wrapped"] = media_op["Classe_Grouped"].astype(str).apply(lambda s: wrap_labels(s, width=18))
+
         hover_template_media = "Classe: %{x}<br>Média: %{y:.1f} km/l<extra></extra>"
         fig1 = make_bar(media_op, "Classe_wrapped", "Media",
                         "Média de Consumo por Classe Operacional",
