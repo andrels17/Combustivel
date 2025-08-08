@@ -4,6 +4,7 @@ import numpy as np
 import plotly.express as px
 from st_aggrid import AgGrid, GridOptionsBuilder
 from datetime import datetime
+import textwrap
 
 # ---------------- Configurações ----------------
 EXCEL_PATH = "Acompto_Abast.xlsx"
@@ -18,6 +19,14 @@ def formatar_brasileiro(valor: float) -> str:
     if pd.isna(valor) or not np.isfinite(valor):
         return "–"
     return "{:,.2f}".format(valor).replace(",", "X").replace(".", ",").replace("X", ".")
+
+def wrap_labels(s: str, width: int = 18) -> str:
+    """Quebra um rótulo em múltiplas linhas usando <br> para Plotly.
+    width: número aproximado de caracteres por linha antes de quebrar."""
+    if pd.isna(s):
+        return ""
+    parts = textwrap.wrap(str(s), width=width)
+    return "<br>".join(parts) if parts else str(s)
 
 @st.cache_data(show_spinner="Carregando e processando dados...")
 def load_data(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -108,16 +117,29 @@ def calcular_kpis_consumo(df: pd.DataFrame) -> dict:
         "eqp_unicos": int(df["Cod_Equip"].nunique()) if "Cod_Equip" in df.columns else 0,
     }
 
-def make_bar(fig_df, x, y, title, labels, palette, rotate_x=0, height=None, hoverfmt=None):
-    """Helper para criar barras padronizadas com hovertemplate."""
-    fig = px.bar(fig_df, x=x, y=y, text=y, title=title, labels=labels, color_discrete_sequence=palette)
-    fig.update_traces(textposition="outside")
-    if rotate_x:
-        fig.update_layout(xaxis_tickangle=rotate_x)
+def make_bar(fig_df, x, y, title, labels, palette, rotate_x=-45, ticksize=10, height=None, hoverfmt=None, wrap_width=18):
+    """Helper para criar barras padronizadas com hovertemplate e rótulos de X legíveis.
+    - rotate_x: ângulo dos ticks (ex: -45)
+    - ticksize: tamanho da fonte dos ticks
+    - wrap_width: se labels são longos, quebra após esse nº de caracteres
+    """
+    # Se formos usar labels longas (equipamentos/classe), aplicamos wrap
+    df_local = fig_df.copy()
+    if x in df_local.columns:
+        df_local[x] = df_local[x].astype(str).apply(lambda s: wrap_labels(s, width=wrap_width))
+
+    fig = px.bar(df_local, x=x, y=y, text=y, title=title, labels=labels, color_discrete_sequence=palette)
+    # texto das barras menor para não sobrepor
+    fig.update_traces(textposition="outside", texttemplate="%{text:.1f}", textfont=dict(size=10))
+    # layout do eixo X para legibilidade
+    fig.update_layout(
+        xaxis=dict(tickangle=rotate_x, tickfont=dict(size=ticksize), automargin=True),
+        margin=dict(l=40, r=20, t=60, b=140),  # aumenta bottom para espaço de rótulos
+        title=dict(x=0.01, xanchor="left"),
+        font=dict(size=13)
+    )
     if height:
         fig.update_layout(height=height)
-    fig.update_layout(margin=dict(l=20, r=20, t=60, b=80), title=dict(x=0.01, xanchor="left"),
-                      font=dict(size=13))
     # hovertemplate customizado
     if hoverfmt:
         fig.update_traces(hovertemplate=hoverfmt)
@@ -268,11 +290,13 @@ def main():
         # Gráfico 1 - Média por Classe Operacional (usando Media = km/l)
         media_op = df_f.groupby("Classe_Operacional")["Media"].mean().reset_index()
         media_op["Media"] = media_op["Media"].round(1)
+        # aplica wrap nas labels para a legibilidade do eixo X
+        media_op["Classe_wrapped"] = media_op["Classe_Operacional"].astype(str).apply(lambda s: wrap_labels(s, width=18))
         hover_template_media = "Classe: %{x}<br>Média: %{y:.1f} km/l<extra></extra>"
-        fig1 = make_bar(media_op, "Classe_Operacional", "Media",
+        fig1 = make_bar(media_op, "Classe_wrapped", "Media",
                         "Média de Consumo por Classe Operacional",
-                        {"Media": "Média (km/l)", "Classe_Operacional": "Classe"},
-                        palette, rotate_x=-8, hoverfmt=hover_template_media)
+                        {"Media": "Média (km/l)", "Classe_wrapped": "Classe"},
+                        palette, rotate_x=-45, ticksize=10, height=520, hoverfmt=hover_template_media, wrap_width=18)
         fig1.update_traces(marker_line_width=0.3)
         fig1.update_layout(template=plotly_template)
         st.plotly_chart(fig1, use_container_width=True, theme=None)
@@ -282,7 +306,7 @@ def main():
         agg["Mes"] = pd.to_datetime(agg["AnoMes"] + "-01").dt.strftime("%b %Y")
         agg["Qtde_Litros"] = agg["Qtde_Litros"].round(1)
         hover_template_month = "Mês: %{x}<br>Litros: %{y:.1f} L<extra></extra>"
-        fig2 = make_bar(agg, "Mes", "Qtde_Litros", "Consumo Mensal", {"Qtde_Litros": "Litros", "Mes": "Mês"}, palette, rotate_x=-45, height=420, hoverfmt=hover_template_month)
+        fig2 = make_bar(agg, "Mes", "Qtde_Litros", "Consumo Mensal", {"Qtde_Litros": "Litros", "Mes": "Mês"}, palette, rotate_x=-45, ticksize=10, height=420, hoverfmt=hover_template_month)
         fig2.update_layout(template=plotly_template)
         st.plotly_chart(fig2, use_container_width=True, theme=None)
 
@@ -295,12 +319,14 @@ def main():
             .sort_values("Media", ascending=False)
         )
         if not trend.empty:
+            # cria label amigável e wrapped
             trend["Equip_Label"] = trend.apply(lambda r: f"{r['Cod_Equip']} - {r['Descricao_Equip']}", axis=1)
+            trend["Equip_Label_wrapped"] = trend["Equip_Label"].apply(lambda s: wrap_labels(s, width=18))
             trend["Media"] = trend["Media"].round(1)
             hover_template_top = "Equipamento: %{x}<br>Média: %{y:.1f} km/l<extra></extra>"
-            fig3 = make_bar(trend, "Equip_Label", "Media", "Média de Consumo por Equipamento (Top 10)",
-                            {"Equip_Label": "Equipamento", "Media": "Média (km/l)"},
-                            palette, rotate_x=-45, height=420, hoverfmt=hover_template_top)
+            fig3 = make_bar(trend, "Equip_Label_wrapped", "Media", "Média de Consumo por Equipamento (Top 10)",
+                            {"Equip_Label_wrapped": "Equipamento", "Media": "Média (km/l)"},
+                            palette, rotate_x=-45, ticksize=10, height=420, hoverfmt=hover_template_top, wrap_width=18)
             fig3.update_traces(marker_line=dict(color="#000000", width=0.5))
             fig3.update_layout(template=plotly_template)
             st.plotly_chart(fig3, use_container_width=True, theme=None)
