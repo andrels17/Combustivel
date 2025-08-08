@@ -5,6 +5,8 @@ import plotly.express as px
 from st_aggrid import AgGrid, GridOptionsBuilder
 from datetime import datetime
 import textwrap
+import io
+import os
 
 # ---------------- Configurações ----------------
 EXCEL_PATH = "Acompto_Abast.xlsx"
@@ -17,8 +19,8 @@ PALETTE_DARK = px.colors.sequential.Plasma_r
 OUTROS_CLASSES = {"Motocicletas", "Mini Carregadeira", "Usina", "Veiculos Leves"}
 
 # Possíveis nomes de colunas para hodômetro e horímetro — atualize se necessário
-HODOMETRO_COLS = ["HODOMETRO", "Hodometro", "Km_Atual", "KM", "Km", "KmAtual", "Km_Atual"]
-HORIMETRO_COLS = ["HORIMETRO", "Horimetro", "Hr_Atual", "Horas", "Horimetro_Horas", "Horimetros"]
+HODOMETRO_COLS = ["HODOMETRO", "Hodometro", "Km_Atual", "KM", "Km", "KmAtual", "Km_Atual", "Km_Ultima_Manutencao"]
+HORIMETRO_COLS = ["HORIMETRO", "Horimetro", "Hr_Atual", "Horas", "Horimetro_Horas", "Horimetros", "Hr_Ultima_Manutencao"]
 
 # ---------------- Utilitários ----------------
 def formatar_brasileiro(valor: float) -> str:
@@ -34,13 +36,14 @@ def wrap_labels(s: str, width: int = 18) -> str:
     parts = textwrap.wrap(str(s), width=width)
     return "<br>".join(parts) if parts else str(s)
 
-def find_first_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
+def find_first_column(df: pd.DataFrame, candidates: list) -> str | None:
     """Retorna o primeiro nome de coluna existente em df a partir da lista de candidatos."""
     for c in candidates:
         if c in df.columns:
             return c
     return None
 
+# Leitura segura do Excel (usa pandas). Cache para performance
 @st.cache_data(show_spinner="Carregando e processando dados...")
 def load_data(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Carrega e prepara DataFrames (Abastecimento e Frotas)."""
@@ -98,7 +101,7 @@ def load_data(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     df["DESCRICAOMARCA"] = df["Ref2"].astype(str)
     df["Fazenda"] = df["Ref1"].astype(str)
 
-    # Cálculo seguro de Consumo km/l
+    # Cálculo seguro de Consumo km/l (fallback)
     if "Km_Hs_Rod" in df.columns and "Qtde_Litros" in df.columns:
         df["Consumo_km_l"] = np.where(df["Qtde_Litros"] > 0, df["Km_Hs_Rod"] / df["Qtde_Litros"], np.nan)
         df["Media"] = df["Consumo_km_l"]
@@ -188,35 +191,29 @@ def detect_odometer_and_hourmeter(df_frotas: pd.DataFrame, df_abast: pd.DataFram
     hod_col = find_first_column(df_frotas, HODOMETRO_COLS)
     hr_col = find_first_column(df_frotas, HORIMETRO_COLS)
 
-    # Se não achar em frotas, tenta extrair do histórico (abastecimento) usando Km_Hs_Rod como fallback
+    # Se não achar em frotas, tenta extrair do histórico (abastecimento) usando Km_Hs_Rod as fallback
     if hod_col is None and "Km_Hs_Rod" in df_abast.columns:
-        hod_col = "Km_Hs_Rod_from_abast"
         # pega o último registro por equipamento como estimativa
         last_km = df_abast.sort_values(["Cod_Equip", "Data"]).groupby("Cod_Equip")["Km_Hs_Rod"].last().rename("Km_current_from_abast")
-        # retornaremos um Series para merge externo quando usado
-        return hod_col, hr_col, last_km
+        return None, hr_col, last_km
     return hod_col, hr_col, None
 
 def build_maintenance_table(df_frotas: pd.DataFrame, last_km_series: pd.Series | None,
                             km_interval_default: int, hr_interval_default: int,
-                            class_intervals: dict[str, dict]):
-    """Constrói tabela com próximos serviços/lubrificação.
-    - class_intervals: dict[class_name] = {"km": int or None, "hr": int or None}
-    """
-    # base: df_frotas copy
+                            class_intervals: dict):
+    """Constrói tabela com próximos serviços/lubrificação."""
     mf = df_frotas.copy()
-    # tenta obter hodometro e horimetro atuais das colunas encontradas
     hod_col = find_first_column(mf, HODOMETRO_COLS)
     hr_col = find_first_column(mf, HORIMETRO_COLS)
 
     if hod_col and hod_col in mf.columns:
         mf["Km_Current"] = pd.to_numeric(mf[hod_col], errors="coerce")
     elif last_km_series is not None:
-        # merge last_km_series by Cod_Equip (index)
         mf = mf.set_index("Cod_Equip")
         mf["Km_Current"] = last_km_series.reindex(mf.index)
         mf = mf.reset_index()
     else:
+        # tenta coluna Hodometro_Atual em BD? (não aqui), default NaN
         mf["Km_Current"] = np.nan
 
     if hr_col and hr_col in mf.columns:
@@ -224,29 +221,129 @@ def build_maintenance_table(df_frotas: pd.DataFrame, last_km_series: pd.Series |
     else:
         mf["Hr_Current"] = np.nan
 
-    # define intervalos por equipamento (classes)
+    # Se existir colunas de última manutenção, usa-as
+    if "Km_Ultima_Manutencao" in mf.columns:
+        mf["Km_Last_Service"] = pd.to_numeric(mf["Km_Ultima_Manutencao"], errors="coerce")
+    else:
+        mf["Km_Last_Service"] = np.nan
+
+    if "Hr_Ultima_Manutencao" in mf.columns:
+        mf["Hr_Last_Service"] = pd.to_numeric(mf["Hr_Ultima_Manutencao"], errors="coerce")
+    else:
+        mf["Hr_Last_Service"] = np.nan
+
+    # define intervalos por equipamento (classe)
     def get_interval(row, kind):
         cls = row.get("Classe_Operacional", "")
         if cls in class_intervals and class_intervals[cls].get(kind) is not None:
             return class_intervals[cls].get(kind)
         return km_interval_default if kind == "km" else hr_interval_default
 
-    # construir próximas manutenções
     mf["Km_Service_Interval"] = mf.apply(lambda r: get_interval(r, "km"), axis=1)
     mf["Hr_Service_Interval"] = mf.apply(lambda r: get_interval(r, "hr"), axis=1)
 
-    # estas colunas assumem que exista um "Km_Last_Service" / "Hr_Last_Service" — se não, aproximamos
-    # Aqui fazemos o cálculo simplificado: se não houver Km_Last_Service, assumimos próxima em Km_Current + interval
-    # Você pode adaptar para usar uma coluna de "Km_Ultima_Revisao" se existir.
-    mf["Km_Next_Service"] = np.where(mf["Km_Current"].notna(), mf["Km_Current"] + mf["Km_Service_Interval"], np.nan)
+    # cálculo do próximo serviço, preferindo last service quando disponível
+    mf["Km_Next_Service"] = np.where(
+        mf["Km_Last_Service"].notna(),
+        mf["Km_Last_Service"] + mf["Km_Service_Interval"],
+        np.where(mf["Km_Current"].notna(), mf["Km_Current"] + mf["Km_Service_Interval"], np.nan)
+    )
     mf["Km_To_Service"] = mf["Km_Next_Service"] - mf["Km_Current"]
 
-    mf["Hr_Next_Oil"] = np.where(mf["Hr_Current"].notna(), mf["Hr_Current"] + mf["Hr_Service_Interval"], np.nan)
+    mf["Hr_Next_Oil"] = np.where(
+        mf["Hr_Last_Service"].notna(),
+        mf["Hr_Last_Service"] + mf["Hr_Service_Interval"],
+        np.where(mf["Hr_Current"].notna(), mf["Hr_Current"] + mf["Hr_Service_Interval"], np.nan)
+    )
     mf["Hr_To_Oil"] = mf["Hr_Next_Oil"] - mf["Hr_Current"]
 
-    # flags: due within threshold (e.g., dentro de X km/hrs)
-    # Para visualização default, marcar como "próximo" se faltar <= 500 km ou <= 20 horas (ajustáveis no sidebar)
     return mf
+
+# ---------------- Excel I/O: salvar log e atualizar planilha ----------------
+def read_all_sheets(path: str) -> dict:
+    """Lê todas as abas do Excel em um dict {sheetname: dataframe}."""
+    if not os.path.exists(path):
+        return {}
+    try:
+        all_sheets = pd.read_excel(path, sheet_name=None)
+        return all_sheets
+    except Exception as e:
+        st.error(f"Erro ao ler o Excel: {e}")
+        return {}
+
+def save_all_sheets(path: str, sheets: dict):
+    """Sobrescreve o arquivo Excel com o dict de sheets."""
+    try:
+        with pd.ExcelWriter(path, engine="openpyxl", mode="w") as writer:
+            for name, df in sheets.items():
+                # evitar índices desnecessários
+                df.to_excel(writer, sheet_name=name, index=False)
+    except Exception as e:
+        st.error(f"Erro ao salvar o Excel: {e}")
+        raise
+
+def append_manut_log(path: str, action: dict):
+    """
+    action: dict com keys:
+    - Cod_Equip, DESCRICAO_EQUIPAMENTO, Tipo (KM/HR/BOTH), Km_Current, Hr_Current, Intervalo_KM, Intervalo_HR, Observacao, Data
+    """
+    sheets = read_all_sheets(path)
+    if sheets is None:
+        sheets = {}
+    log_df = None
+    if "MANUT_LOG" in sheets:
+        log_df = sheets["MANUT_LOG"]
+    else:
+        # cria colunas básicas
+        cols = ["Data", "Cod_Equip", "DESCRICAO_EQUIPAMENTO", "Tipo", "Km_Current", "Hr_Current", "Intervalo_KM", "Intervalo_HR", "Observacao", "Usuario"]
+        log_df = pd.DataFrame(columns=cols)
+    # append
+    row = {
+        "Data": action.get("Data", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        "Cod_Equip": action.get("Cod_Equip"),
+        "DESCRICAO_EQUIPAMENTO": action.get("DESCRICAO_EQUIPAMENTO"),
+        "Tipo": action.get("Tipo"),
+        "Km_Current": action.get("Km_Current"),
+        "Hr_Current": action.get("Hr_Current"),
+        "Intervalo_KM": action.get("Intervalo_KM"),
+        "Intervalo_HR": action.get("Intervalo_HR"),
+        "Observacao": action.get("Observacao", ""),
+        "Usuario": action.get("Usuario", "")
+    }
+    log_df = pd.concat([log_df, pd.DataFrame([row])], ignore_index=True)
+    sheets["MANUT_LOG"] = log_df
+
+    # Também atualiza a aba FROTAS (se existir) com Km_Ultima_Manutencao / Hr_Ultima_Manutencao
+    # Se não existir FROTAS, tentamos BD.
+    target_sheet = "FROTAS" if "FROTAS" in sheets else "BD" if "BD" in sheets else None
+    if target_sheet:
+        df_target = sheets[target_sheet].copy()
+        # ajustar nomes de colunas: se já houver 'Cod_Equip' manter, caso diferente tentar mapear
+        # Supondo que a aba FROTAS já tem coluna Cod_Equip
+        if "Cod_Equip" not in df_target.columns and "COD_EQUIPAMENTO" in df_target.columns:
+            df_target = df_target.rename(columns={"COD_EQUIPAMENTO": "Cod_Equip"})
+        # localiza linha por Cod_Equip
+        cod = action.get("Cod_Equip")
+        mask = df_target["Cod_Equip"] == cod
+        if mask.any():
+            if "Km_Ultima_Manutencao" in df_target.columns:
+                df_target.loc[mask, "Km_Ultima_Manutencao"] = action.get("Km_Current")
+            else:
+                # cria coluna
+                df_target["Km_Ultima_Manutencao"] = pd.NA
+                df_target.loc[mask, "Km_Ultima_Manutencao"] = action.get("Km_Current")
+            if "Hr_Ultima_Manutencao" in df_target.columns:
+                df_target.loc[mask, "Hr_Ultima_Manutencao"] = action.get("Hr_Current")
+            else:
+                df_target["Hr_Ultima_Manutencao"] = pd.NA
+                df_target.loc[mask, "Hr_Ultima_Manutencao"] = action.get("Hr_Current")
+            sheets[target_sheet] = df_target
+        else:
+            # se não achou por Cod_Equip, apenas atualiza a planilha com log (não quebra)
+            sheets[target_sheet] = df_target
+
+    # grava tudo
+    save_all_sheets(path, sheets)
 
 # ---------------- App principal ----------------
 def main():
@@ -255,6 +352,23 @@ def main():
 
     # Carrega dados
     df, df_frotas = load_data(EXCEL_PATH)
+
+    # Inicializa st.session_state.thr de forma segura usando classes encontradas (evita KeyError)
+    classes_found = []
+    if "Classe_Operacional" in df.columns:
+        classes_found = sorted(df["Classe_Operacional"].dropna().unique())
+    elif "Classe_Operacional" in df_frotas.columns:
+        classes_found = sorted(df_frotas["Classe_Operacional"].dropna().unique())
+
+    if "thr" not in st.session_state:
+        # padrão: min/max e intervalos km/hr
+        st.session_state.thr = {}
+        for cls in classes_found:
+            st.session_state.thr[cls] = {"min": 1.5, "max": 5.0, "km_interval": 10000, "hr_interval": 250}
+
+    # inicializa set para evitar gravações repetidas na sessão
+    if "manut_processed" not in st.session_state:
+        st.session_state.manut_processed = set()
 
     # Sidebar: tema e filtros e controles de manutenção
     with st.sidebar:
@@ -270,7 +384,7 @@ def main():
         st.markdown("---")
         st.header("📈 Visual")
         top_n = st.slider("Número de categorias (Top N) antes de agrupar em 'Outros'", min_value=3, max_value=30, value=10)
-        hide_text_threshold = st.slider("Esconder valores nas barras quando categorias > ", min_value=5, max_value=40, value=8)
+        hide_text_threshold = st.slider("Esconder valores nas barras quando categorias >", min_value=5, max_value=40, value=8)
 
         st.markdown("---")
         st.header("🔧 Manutenção & Lubrificação")
@@ -385,7 +499,6 @@ def main():
             df_plot_source["Classe_TopN"] = df_plot_source["Classe_Grouped"].apply(lambda s: s if s in top_keep else "Outros")
             media_op = df_plot_source.groupby("Classe_TopN")["Media"].mean().reset_index().rename(columns={"Classe_TopN":"Classe_Grouped"})
             media_op["Media"] = media_op["Media"].round(1)
-            # forçar order: top by média then Outros last
             outros_row = media_op[media_op["Classe_Grouped"] == "Outros"]
             media_op = media_op[media_op["Classe_Grouped"] != "Outros"].sort_values("Media", ascending=False)
             if not outros_row.empty:
@@ -537,7 +650,6 @@ def main():
         st.header("⚙️ Padrões por Classe Operacional (Alertas)")
         if "thr" not in st.session_state:
             classes = df["Classe_Operacional"].dropna().unique() if "Classe_Operacional" in df.columns else []
-            # inicia com padrões básicos por classe (pode personalizar)
             st.session_state.thr = {cls: {"min": 1.5, "max": 5.0, "km_interval": 10000, "hr_interval": 250} for cls in classes}
 
         st.markdown("Personalize intervalo de manutenção por classe (opcional):")
@@ -546,12 +658,9 @@ def main():
             mn = cols[0].number_input(f"{cls} → Mínimo (km/l)", min_value=0.0, max_value=100.0, value=st.session_state.thr[cls]["min"], step=0.1, key=f"min_{cls}")
             mx = cols[1].number_input(f"{cls} → Máximo (km/l)", min_value=0.0, max_value=100.0, value=st.session_state.thr[cls]["max"], step=0.1, key=f"max_{cls}")
             kint = cols[2].number_input(f"{cls} → Intervalo revisão (km)", min_value=0, max_value=200000, value=st.session_state.thr[cls]["km_interval"], step=100, key=f"kmint_{cls}")
-            # guarda alterações
             st.session_state.thr[cls]["min"] = mn
             st.session_state.thr[cls]["max"] = mx
             st.session_state.thr[cls]["km_interval"] = int(kint)
-            # hr interval como controle local (se quiser)
-            # opcional: adicionar horário por classe
 
     # ----- Aba Manutenção -----
     with tab_manut:
@@ -561,8 +670,17 @@ def main():
         # detect colunas reais (e uma série fallback do histórico)
         hod_col, hr_col, last_km_series = detect_odometer_and_hourmeter(df_frotas, df)
 
-        st.markdown(f"**Hodômetro encontrado em frotas:** `{hod_col}`" if hod_col else "**Hodômetro:** não encontrado diretamente nas colunas de frotas; usando histórico como fallback (Km_Hs_Rod).")
-        st.markdown(f"**Horímetro encontrado em frotas:** `{hr_col}`" if hr_col else "**Horímetro:** não encontrado.")
+        if hod_col:
+            st.markdown(f"**Hodômetro encontrado em frotas:** `{hod_col}`")
+        elif last_km_series is not None:
+            st.markdown("**Hodômetro:** não encontrado diretamente nas colunas de frotas; usando histórico como fallback (Km_Hs_Rod).")
+        else:
+            st.markdown("**Hodômetro:** não encontrado.")
+
+        if hr_col:
+            st.markdown(f"**Horímetro encontrado em frotas:** `{hr_col}`")
+        else:
+            st.markdown("**Horímetro:** não encontrado.")
 
         # montar dict de intervalos por classe a partir de st.session_state.thr, se existir
         class_intervals = {}
@@ -579,7 +697,6 @@ def main():
         mf["Due_Km"] = mf["Km_To_Service"].apply(lambda x: True if pd.notna(x) and x <= km_due_threshold else False)
         mf["Due_Hr"] = mf["Hr_To_Oil"].apply(lambda x: True if pd.notna(x) and x <= hr_due_threshold else False)
 
-        # coluna combinada
         mf["Any_Due"] = mf["Due_Km"] | mf["Due_Hr"]
 
         # Tabela: equipamentos com manutenção próxima ou vencida
@@ -599,11 +716,54 @@ def main():
             st.info("Nenhum equipamento com alerta de manutenção dentro dos thresholds configurados.")
 
         st.markdown("---")
+        st.subheader("Marcar manutenção realizada")
+        st.markdown("Marque a manutenção/lubrificação realizada — isso criará um registro em `MANUT_LOG` na planilha e atualizará a coluna de última manutenção na aba FROTAS/BD.")
+
+        if not df_due.empty:
+            # lista linhas com checkboxes
+            for _, row in df_due.iterrows():
+                cod = int(row["Cod_Equip"]) if not pd.isna(row["Cod_Equip"]) else None
+                label = f"{int(cod)} - {row.get('DESCRICAO_EQUIPAMENTO','')}" if cod else str(row.get('DESCRICAO_EQUIPAMENTO',''))
+                cols = st.columns([3,1,1,1])
+                cols[0].markdown(f"**{label}**")
+                # mostrar informações principais
+                kmc = row.get("Km_Current", np.nan)
+                hr_c = row.get("Hr_Current", np.nan)
+                cols[1].markdown(f"Km: {kmc if pd.notna(kmc) else '—'}")
+                cols[2].markdown(f"Hr: {hr_c if pd.notna(hr_c) else '—'}")
+                # checkbox ação
+                key = f"manut_done_{cod}"
+                if cols[3].checkbox("Manutenção realizada", key=key):
+                    # evitar gravação duplicada por sessão
+                    if key in st.session_state.manut_processed:
+                        st.success("Já registrado nesta sessão.")
+                    else:
+                        # prepara action dict
+                        tipo = "KM" if row.get("Due_Km", False) and not row.get("Due_Hr", False) else ("HR" if row.get("Due_Hr", False) and not row.get("Due_Km", False) else "BOTH")
+                        action = {
+                            "Data": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Cod_Equip": cod,
+                            "DESCRICAO_EQUIPAMENTO": row.get("DESCRICAO_EQUIPAMENTO", ""),
+                            "Tipo": tipo,
+                            "Km_Current": float(row.get("Km_Current")) if pd.notna(row.get("Km_Current")) else np.nan,
+                            "Hr_Current": float(row.get("Hr_Current")) if pd.notna(row.get("Hr_Current")) else np.nan,
+                            "Intervalo_KM": int(row.get("Km_Service_Interval")) if pd.notna(row.get("Km_Service_Interval")) else km_interval_default,
+                            "Intervalo_HR": int(row.get("Hr_Service_Interval")) if pd.notna(row.get("Hr_Service_Interval")) else hr_interval_default,
+                            "Observacao": "",
+                            "Usuario": st.session_state.get("user", "usuario_app")
+                        }
+                        try:
+                            append_manut_log(EXCEL_PATH, action)
+                            st.success(f"Manutenção registrada no Excel (equip. {cod}).")
+                            st.session_state.manut_processed.add(key)
+                        except Exception as e:
+                            st.error(f"Falha ao registrar manutenção: {e}")
+
+        st.markdown("---")
         st.subheader("Visão geral da frota (manutenção planejada)")
         overview_cols = ["Cod_Equip", "DESCRICAO_EQUIPAMENTO", "Km_Current", "Km_Next_Service", "Km_Service_Interval", "Hr_Current", "Hr_Next_Oil", "Hr_Service_Interval"]
         available_over = [c for c in overview_cols if c in mf.columns]
         st.dataframe(mf[available_over].sort_values("Cod_Equip").reset_index(drop=True), use_container_width=True)
-
         csv_over = mf[available_over].to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Exportar CSV - Plano de Manutenção (Visão Geral)", csv_over, "manutencao_overview.csv", "text/csv")
 
