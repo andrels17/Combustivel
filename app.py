@@ -130,9 +130,14 @@ def calcular_kpis_consumo(df: pd.DataFrame) -> dict:
 
 def generate_pdf(images: list[bytes]) -> bytes:
     pdf = FPDF(orientation="P", unit="mm", format="A4")
-    for img in images:
+
+    for img_bytes in images:
         pdf.add_page()
-        pdf.image(io.BytesIO(img), x=10, y=20, w=190)
+        img_stream = io.BytesIO(img_bytes)
+        # informa ao FPDF que o conteúdo é PNG
+        pdf.image(name=img_stream, x=10, y=20, w=190, type="PNG")
+
+    # retorna o PDF como bytes no encoding latin1
     return pdf.output(dest="S").encode("latin1")
 
 def main():
