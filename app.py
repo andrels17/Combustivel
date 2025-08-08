@@ -7,6 +7,8 @@ from streamlit_plotly_events import plotly_events
 from datetime import datetime
 from fpdf import FPDF
 import io
+import tempfile
+import os
 
 # --------------- Configurações Gerais ---------------
 EXCEL_PATH = "Acompto_Abast.xlsx"
@@ -155,7 +157,7 @@ def generate_pdf(images: list[bytes]) -> bytes:
             except OSError:
                 pass
 
-    return 
+    return pdf_bytes
 
 def main():
     st.set_page_config(page_title="Dashboard de Frotas e Abastecimentos", layout="wide")
