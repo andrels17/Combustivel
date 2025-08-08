@@ -193,6 +193,18 @@ def main():
         )
         st.plotly_chart(fig1, use_container_width=True)
 
+     # 2) Gráfico barras: consumo mensal
+        agg = df_f.groupby("AnoMes")["Qtde_Litros"].mean().reset_index()
+        agg["Mes"] = pd.to_datetime(agg["AnoMes"] + "-01").dt.strftime("%b %Y")
+        agg["Qtde_Litros"] = agg["Qtde_Litros"].round(1)
+        fig2 = px.bar(
+            agg,
+            x="Mes",
+            y="Qtde_Litros",
+            text="Qtde_Litros",
+            title="Consumo Mensal",
+            labels={"Qtde_Litros": "Litros", "Mes": "Mês"}
+
 
     # --- ABA 2: Consulta de Frota (NOVO) ---
     with tab_consulta:
