@@ -136,21 +136,17 @@ def generate_pdf(images: list[bytes]) -> bytes:
 
     try:
         for img_bytes in images:
-            # cria um arquivo .png temporário
             tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
             tmp.write(img_bytes)
             tmp.flush()
             tmp.close()
             temp_files.append(tmp.name)
 
-            # adiciona página e insere a imagem
             pdf.add_page()
             pdf.image(tmp.name, x=10, y=20, w=190)
 
-        # gera o PDF em memória e codifica
         pdf_bytes = pdf.output(dest="S").encode("latin1")
     finally:
-        # remove todos os arquivos temporários
         for path in temp_files:
             try:
                 os.remove(path)
@@ -281,25 +277,20 @@ def main():
                 )
             st.plotly_chart(fig_acum, use_container_width=True)
 
-        # ────────────────────────────
-        # Gráficos adicionais sugeridos
         # 5) Consumo Mensal YoY
         df_month = df_f.set_index("Data").resample("M")["Qtde_Litros"].sum().to_frame()
         df_month["Ano"] = df_month.index.year
         df_month["Mes"] = df_month.index.strftime("%b")
         pivot = df_month.pivot(index="Mes", columns="Ano", values="Qtde_Litros")
-        # ordenar meses
         meses_ord = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
         pivot = pivot.reindex(meses_ord).dropna(how="all")
         fig_yoy = px.bar(
-            pivot,
-            title="Consumo Mensal YoY",
-            labels={"value": "Litros", "Mes": "Mês"},
-            barmode="group"
+            pivot, title="Consumo Mensal YoY",
+            labels={"value": "Litros", "Mes": "Mês"}, barmode="group"
         )
         st.plotly_chart(fig_yoy, use_container_width=True)
 
-                # 6) Projeção Próximos 3 Meses (Média Móvel)
+        # 6) Projeção Próximos 3 Meses (Média Móvel)
         mov3 = df_month["Qtde_Litros"].rolling(3).mean()
         clean_mov3 = mov3.dropna()
 
@@ -308,18 +299,14 @@ def main():
                 "Dados insuficientes para calcular média móvel de 3 meses. "
                 "A projeção não estará disponível."
             )
-            # mantém apenas o histórico real
             df_proj = df_month["Qtde_Litros"].rename("Consumo")
         else:
             last_val = clean_mov3.iloc[-1]
             proj_idx = pd.date_range(
                 start=df_month.index.max() + pd.offsets.MonthBegin(),
-                periods=3,
-                freq="M"
+                periods=3, freq="M"
             )
             proj = pd.Series([last_val] * 3, index=proj_idx, name="Consumo")
-
-            # concatena histórico real + projeção
             df_proj = pd.concat([
                 df_month["Qtde_Litros"].rename("Consumo"),
                 proj
@@ -332,15 +319,12 @@ def main():
         )
         st.plotly_chart(fig_proj, use_container_width=True)
 
-
         # 7) Pareto: Top 20% dos Equipamentos
         cons_eq = df_f.groupby("Cod_Equip")["Qtde_Litros"].sum().sort_values(ascending=False)
         cumperc = cons_eq.cumsum() / cons_eq.sum()
         df_pareto = pd.DataFrame({"Consumo": cons_eq, "Acumulado": cumperc})
         fig_par = px.bar(
-            df_pareto,
-            x=df_pareto.index.astype(str),
-            y="Consumo",
+            df_pareto, x=df_pareto.index.astype(str), y="Consumo",
             title="Pareto: Top Equipamentos por Consumo",
             labels={"x": "Equipamento", "Consumo": "Litros"}
         )
@@ -446,7 +430,18 @@ def main():
 
             st.markdown("---")
             st.subheader("Informações Cadastrais")
-            st.dataframe(dados_eq.drop("label").to_frame("Valor"), use_container_width=True)
+
+            df_info = dados_eq.drop("label").to_frame("Valor")
+            df_info["Valor"] = df_info["Valor"].apply(
+                lambda v: (
+                    formatar_brasileiro(v)
+                    if isinstance(v, (int, float, np.floating)) else
+                    v.strftime("%Y-%m-%d")
+                    if isinstance(v, pd.Timestamp) else
+                    str(v)
+                )
+            )
+            st.dataframe(df_info, use_container_width=True)
 
     # --- ABA 3: Tabela Detalhada ---
     with tab_tabela:
