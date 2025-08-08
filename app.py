@@ -204,7 +204,7 @@ def main():
             text="Qtde_Litros",
             title="Consumo Mensal",
             labels={"Qtde_Litros": "Litros", "Mes": "Mês"}
-
+        )
 
     # --- ABA 2: Consulta de Frota (NOVO) ---
     with tab_consulta:
