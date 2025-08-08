@@ -6,8 +6,8 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
 # --------------- Configurações Gerais ---------------
 
+# O caminho para o seu único arquivo Excel
 EXCEL_PATH = "Acompto_Abast.xlsx"
-SHEET_NAME  = "BD"
 
 # --------------- Funções Utilitárias ---------------
 
@@ -23,86 +23,133 @@ def formatar_brasileiro(valor: float) -> str:
     )
 
 @st.cache_data(show_spinner=False)
-def load_data(path: str, sheet: str) -> pd.DataFrame:
-    """Carrega e prepara o DataFrame."""
+def load_data(path: str) -> pd.DataFrame:
+    """Carrega, mescla e prepara os DataFrames a partir do mesmo arquivo Excel."""
     try:
-        df = pd.read_excel(path, sheet_name=sheet, skiprows=2)
+        # Carrega a planilha de abastecimentos
+        df_abastecimento = pd.read_excel(path, sheet_name="BD", skiprows=2)
+        
+        # Carrega a planilha de frotas, pulando a primeira linha de cabeçalho
+        df_frotas = pd.read_excel(path, sheet_name="FROTAS", skiprows=1)
+
     except FileNotFoundError:
         st.error(f"Arquivo não encontrado em `{path}`")
         st.stop()
+    except ValueError as e:
+        if "Sheet name" in str(e):
+            st.error(f"Erro ao carregar o arquivo. Verifique se as planilhas 'BD' e 'FROTAS' existem em `{path}`.")
+            st.stop()
+        else:
+            raise e
 
-    df.columns = [
+    # Renomear e selecionar colunas do DataFrame de frotas
+    df_frotas = df_frotas.rename(columns={
+        "COD_EQUIPAMENTO": "Cod_Equip",
+        "DESCRICAO_EQUIPAMENTO": "Descricao_Equip_Frota",
+        "POTENCIA": "Potencia_CV",
+        "Classe": "Classe_Frota",
+        "Classe Operacional": "Classe_Operacional_Frota",
+        "DESCRICAO_PROPRIETARIO": "Descricao_Proprietario_Frota"
+    })
+    
+    colunas_frota = [
+        "Cod_Equip", "Descricao_Equip_Frota", "Potencia_CV",
+        "Classe_Frota", "Classe_Operacional_Frota", "Descricao_Proprietario_Frota"
+    ]
+    # Garante que as colunas existem antes de selecionar
+    colunas_existentes_frota = [col for col in colunas_frota if col in df_frotas.columns]
+    df_frotas = df_frotas[colunas_existentes_frota]
+    
+    # Remove duplicatas na base de frotas para evitar problemas na mesclagem
+    df_frotas = df_frotas.drop_duplicates(subset=["Cod_Equip"])
+
+    # Renomear colunas do DataFrame de abastecimento
+    df_abastecimento.columns = [
         "Data", "Cod_Equip", "Descricao_Equip", "Qtde_Litros", "Km_Hs_Rod",
         "Media", "Media_P", "Perc_Media", "Ton_Cana", "Litros_Ton",
         "Ref1", "Ref2", "Unidade", "Safra", "Mes_Excel", "Semana_Excel",
-        "Classe", "Classe_Operacional", "Descricao_Proprietario", "Potencia_CV"
+        "Classe", "Classe_Operacional", "Descricao_Proprietario", "Potencia_CV_Abast"
     ]
+    
+    # Mesclar os dois DataFrames
+    df = pd.merge(df_abastecimento, df_frotas, on="Cod_Equip", how="left")
+
+    # Atualizar as colunas com os dados da frota (considerados como fonte principal)
+    if "Classe_Frota" in df.columns:
+        df["Classe"] = df["Classe_Frota"]
+    if "Classe_Operacional_Frota" in df.columns:
+        df["Classe_Operacional"] = df["Classe_Operacional_Frota"]
+    if "Descricao_Proprietario_Frota" in df.columns:
+        df["Descricao_Proprietario"] = df["Descricao_Proprietario_Frota"]
+
+
+    # Preparar as colunas
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
     df = df[df["Data"].notna()]
 
-    df["Mes"]       = df["Data"].dt.month
-    df["Semana"]    = df["Data"].dt.isocalendar().week
-    df["Ano"]       = df["Data"].dt.year
-    df["AnoMes"]    = df["Data"].dt.to_period("M").astype(str)
+    df["Mes"] = df["Data"].dt.month
+    df["Semana"] = df["Data"].dt.isocalendar().week
+    df["Ano"] = df["Data"].dt.year
+    df["AnoMes"] = df["Data"].dt.to_period("M").astype(str)
     df["AnoSemana"] = df["Data"].dt.strftime("%Y-%U")
 
     df["Qtde_Litros"] = pd.to_numeric(df["Qtde_Litros"], errors="coerce")
-    df["Media"]       = pd.to_numeric(df["Media"], errors="coerce")
-    df["Media_P"]     = pd.to_numeric(df["Media_P"], errors="coerce")
-
+    df["Media"] = pd.to_numeric(df["Media"], errors="coerce")
+    df["Media_P"] = pd.to_numeric(df["Media_P"], errors="coerce")
+    
     df["Fazenda"] = df["Ref1"].astype(str)
     return df
 
 def sidebar_filters(df: pd.DataFrame) -> dict:
     st.sidebar.header("📅 Filtros")
-    ano_max    = int(df["Ano"].max())
-    mes_max    = int(df[df["Ano"] == ano_max]["Mes"].max())
+    ano_max = int(df["Ano"].max())
+    mes_max = int(df[df["Ano"] == ano_max]["Mes"].max())
     semana_max = int(df[df["Ano"] == ano_max]["Semana"].max())
-    safra_max  = sorted(df["Safra"].dropna().unique())[-1]
+    safra_max = sorted(df["Safra"].dropna().unique())[-1]
 
     todas_safras = st.sidebar.checkbox("Todas as Safras", False, key="todas_safras")
-    safra_opts   = sorted(df["Safra"].dropna().unique())
-    sel_safras   = safra_opts if todas_safras else st.sidebar.multiselect(
+    safra_opts = sorted(df["Safra"].dropna().unique())
+    sel_safras = safra_opts if todas_safras else st.sidebar.multiselect(
         "Safra", safra_opts, default=[safra_max], key="ms_safras"
     )
 
     todos_anos = st.sidebar.checkbox("Todos os Anos", False, key="todos_anos")
-    anos_opts  = sorted(df["Ano"].unique())
-    sel_anos   = anos_opts if todos_anos else st.sidebar.multiselect(
+    anos_opts = sorted(df["Ano"].unique())
+    sel_anos = anos_opts if todos_anos else st.sidebar.multiselect(
         "Ano", anos_opts, default=[ano_max], key="ms_anos"
     )
 
     todos_meses = st.sidebar.checkbox("Todos os Meses", False, key="todos_meses")
-    meses_opts  = sorted(df[df["Ano"].isin(sel_anos)]["Mes"].unique())
-    sel_meses   = meses_opts if todos_meses else st.sidebar.multiselect(
+    meses_opts = sorted(df[df["Ano"].isin(sel_anos)]["Mes"].unique())
+    sel_meses = meses_opts if todos_meses else st.sidebar.multiselect(
         "Mês", meses_opts, default=[mes_max], key="ms_meses"
     )
 
     todas_semanas = st.sidebar.checkbox("Todas as Semanas", False, key="todas_semanas")
-    semanas_opts  = sorted(
+    semanas_opts = sorted(
         df[(df["Ano"].isin(sel_anos)) & (df["Mes"].isin(sel_meses))]["Semana"].unique()
     )
-    sel_semanas   = semanas_opts if todas_semanas else st.sidebar.multiselect(
+    sel_semanas = semanas_opts if todas_semanas else st.sidebar.multiselect(
         "Semana", semanas_opts, default=[semana_max], key="ms_semanas"
     )
 
     todas_classes = st.sidebar.checkbox("Todas as Classes", True, key="todas_classes")
-    classes_opts  = sorted(df["Classe_Operacional"].dropna().unique())
-    sel_classes   = classes_opts if todas_classes else st.sidebar.multiselect(
+    classes_opts = sorted(df["Classe_Operacional"].dropna().unique())
+    sel_classes = classes_opts if todas_classes else st.sidebar.multiselect(
         "Classe Operacional", classes_opts,
         default=classes_opts, key="ms_classes"
     )
 
     dt_min, dt_max = df["Data"].min(), df["Data"].max()
-    sel_periodo    = st.sidebar.date_input("Período", [dt_min, dt_max], key="periodo")
+    sel_periodo = st.sidebar.date_input("Período", [dt_min, dt_max], key="periodo")
 
     return {
-        "safras":     sel_safras,
-        "anos":       sel_anos,
-        "meses":      sel_meses,
-        "semanas":    sel_semanas,
+        "safras": sel_safras,
+        "anos": sel_anos,
+        "meses": sel_meses,
+        "semanas": sel_semanas,
         "classes_op": sel_classes,
-        "periodo":    sel_periodo,
+        "periodo": sel_periodo,
     }
 
 def filtrar_dados(df: pd.DataFrame, opts: dict) -> pd.DataFrame:
@@ -118,23 +165,23 @@ def filtrar_dados(df: pd.DataFrame, opts: dict) -> pd.DataFrame:
     return df.loc[mask].copy()
 
 def calcular_kpis(df: pd.DataFrame) -> dict:
-    total_litros  = df["Qtde_Litros"].sum()
+    total_litros = df["Qtde_Litros"].sum()
     media_consumo = df["Media"].mean()
-    eqp_unicos    = df["Cod_Equip"].nunique()
+    eqp_unicos = df["Cod_Equip"].nunique()
 
     inicio, fim = df["Data"].min(), df["Data"].max()
-    delta       = fim - inicio
-    prev        = df[(df["Data"] >= inicio - delta) & (df["Data"] < inicio)]
-    prev_sum    = prev["Qtde_Litros"].sum()
-    delta_pct   = None if prev_sum == 0 else (total_litros - prev_sum) / prev_sum * 100
+    delta = fim - inicio
+    prev = df[(df["Data"] >= inicio - delta) & (df["Data"] < inicio)]
+    prev_sum = prev["Qtde_Litros"].sum()
+    delta_pct = None if prev_sum == 0 else (total_litros - prev_sum) / prev_sum * 100
     diff_litros = total_litros - prev_sum
 
     return {
-        "total_litros":    total_litros,
-        "media_consumo":   media_consumo,
-        "eqp_unicos":      eqp_unicos,
+        "total_litros": total_litros,
+        "media_consumo": media_consumo,
+        "eqp_unicos": eqp_unicos,
         "delta_litros_pct": delta_pct,
-        "diff_litros":     diff_litros
+        "diff_litros": diff_litros
     }
 
 def main():
@@ -144,14 +191,15 @@ def main():
     )
     st.title("📊 Dashboard de Consumo de Abastecimentos")
 
-    df   = load_data(EXCEL_PATH, SHEET_NAME)
+    # Chamada da função atualizada, agora passando apenas o caminho do arquivo Excel
+    df = load_data(EXCEL_PATH)
     opts = sidebar_filters(df)
     df_f = filtrar_dados(df, opts)
     if df_f.empty:
         st.error("Sem dados no período/filtros selecionados.")
         st.stop()
 
-    kpis     = calcular_kpis(df_f)
+    kpis = calcular_kpis(df_f)
     c1, c2, c3, c4 = st.columns(4)
     c1.metric(
         "Litros Consumidos",
@@ -209,7 +257,6 @@ def main():
 
         # 2) Gráfico barras: consumo mensal
         agg = df_f.groupby("AnoMes")["Qtde_Litros"].mean().reset_index()
-        # converte "YYYY-MM" em nome do mês
         agg["Mes"] = pd.to_datetime(agg["AnoMes"] + "-01").dt.strftime("%b %Y")
         agg["Qtde_Litros"] = agg["Qtde_Litros"].round(1)
         fig2 = px.bar(
@@ -223,15 +270,14 @@ def main():
         fig2.update_traces(texttemplate="%{text:.1f}", textposition="outside")
         fig2.update_layout(xaxis_tickangle=-45, height=450)
         st.plotly_chart(fig2, use_container_width=True)
-
         
         # Gráfico: Top 10 equipamentos por consumo
         top10 = df_f.groupby("Cod_Equip")["Qtde_Litros"].sum().nlargest(10).index
         trend = (
             df_f[df_f["Cod_Equip"].isin(top10)]
-                .groupby(["Cod_Equip", "Descricao_Equip"])["Media"].mean()
-                .reset_index()
-                .sort_values("Media", ascending=False)
+            .groupby(["Cod_Equip", "Descricao_Equip"])["Media"].mean()
+            .reset_index()
+            .sort_values("Media", ascending=False)
         )
         trend["Equip_Label"] = trend.apply(
             lambda r: f"{r['Cod_Equip']} - {r['Descricao_Equip']}", axis=1
@@ -293,17 +339,19 @@ def main():
                 },
                 title="Consumo Acumulado por Safra"
             )
-            ultima = sel_safras[-1]
-            df_u = df_cmp[df_cmp["Safra"] == ultima]
-            fig_acum.add_scatter(
-                x=[df_u["Dias_Uteis"].max()],
-                y=[df_u["Qtde_Litros"].max()],
-                mode="markers+text",
-                text=[f"Hoje: {formatar_brasileiro(df_u['Qtde_Litros'].max())} L"],
-                textposition="top right",
-                marker=dict(size=8, color="black"),
-                showlegend=False
-            )
+            if sel_safras:
+                ultima = sel_safras[-1]
+                df_u = df_cmp[df_cmp["Safra"] == ultima]
+                if not df_u.empty:
+                    fig_acum.add_scatter(
+                        x=[df_u["Dias_Uteis"].max()],
+                        y=[df_u["Qtde_Litros"].max()],
+                        mode="markers+text",
+                        text=[f"Hoje: {formatar_brasileiro(df_u['Qtde_Litros'].max())} L"],
+                        textposition="top right",
+                        marker=dict(size=8, color="black"),
+                        showlegend=False
+                    )
             st.plotly_chart(fig_acum, use_container_width=True)
 
     # TAB 2: tabela
@@ -312,12 +360,13 @@ def main():
         classes = df_f["Classe_Operacional"].dropna().unique()
         cell_rules = {}
         for cls in classes:
-            mn = st.session_state.thr[cls]["min"]
-            mx = st.session_state.thr[cls]["max"]
-            cell_rules[cls] = {
-                'condition': f"x.value < {mn} || x.value > {mx}",
-                'style': {'backgroundColor': 'red', 'color': 'white'}
-            }
+            if cls in st.session_state.thr:
+                mn = st.session_state.thr[cls]["min"]
+                mx = st.session_state.thr[cls]["max"]
+                cell_rules[cls] = {
+                    'condition': f"x.value < {mn} || x.value > {mx}",
+                    'style': {'backgroundColor': 'red', 'color': 'white'}
+                }
 
         gb = GridOptionsBuilder.from_dataframe(df_f)
         gb.configure_default_column(filterable=True, sortable=True, resizable=True)
@@ -327,9 +376,9 @@ def main():
                             header_name="Litros")
         gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=10)
         gb.configure_selection(selection_mode="multiple",
-                               use_checkbox=True, groupSelectsChildren=True)
+                                use_checkbox=True, groupSelectsChildren=True)
 
-        grid_opts     = gb.build()
+        grid_opts = gb.build()
         grid_response = AgGrid(
             df_f,
             gridOptions=grid_opts,
@@ -354,6 +403,10 @@ def main():
         classes = sorted(df["Classe_Operacional"].dropna().unique())
         for cls in classes:
             c_min, c_max = st.columns(2)
+            # Garante que a chave exista antes de acessá-la
+            if cls not in st.session_state.thr:
+                st.session_state.thr[cls] = {"min": 1.5, "max": 5.0}
+            
             with c_min:
                 mn = st.number_input(
                     f"{cls} → Mínimo (km/l)", min_value=0.0, max_value=100.0,
