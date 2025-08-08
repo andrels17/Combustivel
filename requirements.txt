@@ -11,3 +11,4 @@ streamlit-plotly-events
 fpdf
 tempfile
 os
+pyarrow>=11.0.0
