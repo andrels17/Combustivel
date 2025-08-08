@@ -12,19 +12,13 @@ from openpyxl import load_workbook
 
 # ---------------- Configurações ----------------
 EXCEL_PATH = "Acompto_Abast.xlsx"
+MANUT_LOG_SHEET = "MANUTENCAO_LOG"
+COL_KM_HR_ATUAL = "KM_HR_Atual"  # se criar na aba BD, o app usa este valor como leitura atual
+OUTROS_CLASSES = {"Motocicletas", "Mini Carregadeira", "Usina", "Veiculos Leves"}
 
 # Paletas
 PALETTE_LIGHT = px.colors.sequential.Blues_r
 PALETTE_DARK = px.colors.sequential.Plasma_r
-
-# Classes agrupadas em 'Outros'
-OUTROS_CLASSES = {"Motocicletas", "Mini Carregadeira", "Usina", "Veiculos Leves"}
-
-# Nome exato da coluna única que conterá hodômetro / horímetro atual na aba BD (opcional)
-COL_KM_HR_ATUAL = "KM_HR_Atual"  # se você criar essa coluna na planilha BD, o app a usará diretamente
-
-# Nome da aba de log de manutenção
-MANUT_LOG_SHEET = "MANUTENCAO_LOG"
 
 # ---------------- Utilitários ----------------
 def formatar_brasileiro(valor: float) -> str:
@@ -38,51 +32,127 @@ def wrap_labels(s: str, width: int = 18) -> str:
     parts = textwrap.wrap(str(s), width=width)
     return "<br>".join(parts) if parts else str(s)
 
-def find_col_like(df: pd.DataFrame, keywords: list[str]) -> str | None:
-    """Procura primeira coluna cujo nome contém qualquer palavra-chave (case-insensitive)."""
-    cols = df.columns.astype(str)
-    low = [c.lower() for c in cols]
-    for kw in keywords:
-        for i, c in enumerate(low):
-            if kw.lower() in c:
-                return cols[i]
-    return None
+def norm_col_name(name: str) -> str:
+    """Normaliza um nome de coluna (minúsculas, sem acentos / espaços extras)."""
+    if not isinstance(name, str):
+        return ""
+    s = name.strip().lower()
+    s = s.replace(" ", "_")
+    s = s.replace("-", "_")
+    s = s.replace(".", "")
+    return s
 
-def find_first_numeric_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
-    """Retorna primeiro candidato que exista em df e contenha valores numéricos na maioria."""
-    for cand in candidates:
-        if cand in df.columns:
-            ser = pd.to_numeric(df[cand], errors="coerce")
-            # se pelo menos alguns valores forem numéricos, assume-se que é coluna válida
-            if ser.notna().sum() > 0:
-                return cand
-    # fallback: se nenhuma correspondência por nome, procura colunas numéricas que pareçam "km" ou "hor" no nome
-    for c in df.columns:
-        name = str(c).lower()
-        if any(k in name for k in ["km", "quil", "hor", "hr", "hora", "kms"]) and pd.to_numeric(df[c], errors="coerce").notna().sum() > 0:
-            return c
+# mapeamentos de aliases: chave = padrão usado no app, valores possíveis no Excel
+COLUMN_ALIASES = {
+    "Data": ["data", "date"],
+    "Cod_Equip": ["cod_equipamento", "cod_equip", "codigo_equip", "cod", "codigo"],
+    "Descricao_Equip": ["descricao_equipamento", "descricao_equip", "descricao"],
+    "Qtde_Litros": ["qtde_litros", "litros", "qtde", "quantidade_litros"],
+    "Km_Hs_Rod": ["km_hs_rod", "km_hs", "km", "kmrod", "km_hs_rodacao", "quilometros", "quilometro"],
+    "Media": ["media", "consumo", "consumo_km_l"],
+    "Media_P": ["media_p", "media_percentual"],
+    "Ref1": ["ref1", "referencia1"],
+    "Ref2": ["ref2", "referencia2"],
+    "Unidade": ["unidade", "unid", "unid."],
+    "Safra": ["safra"],
+    "Classe_Operacional": ["classe_operacional", "classe_operacao", "classe_operacional", "classe_operacional".lower(), "classe operacional", "classeoperacional"],
+    "DESCRICAOMARCA": ["ref2", "marca", "marca_descricao", "descricaomarca"],
+    # Caso a planilha FROTAS use variações:
+    "DESCRICAO_EQUIPAMENTO": ["descricao_equipamento", "descricaoequipamento", "descricao_equ"], 
+    "PLACA": ["placa", "plate"],
+    "ANOMODELO": ["ano_modelo", "ano_modelo", "anomodelo", "ano", "ano_modelo"],
+    # Horimetro / Hodometro single col alternative
+    COL_KM_HR_ATUAL: [norm_col_name(COL_KM_HR_ATUAL).lower(), "valor_atual", "km_hr_atual", "km_hr", "hodometro_horimetro", "hodometro", "horimetro"]
+}
+
+def find_column_by_alias(cols: list[str], aliases: list[str]) -> str | None:
+    """Procura na lista cols algum que bata com aliases (normalizados). Retorna nome original da coluna."""
+    norm = {norm_col_name(c): c for c in cols}
+    for a in aliases:
+        na = norm_col_name(a)
+        if na in norm:
+            return norm[na]
     return None
 
 @st.cache_data(show_spinner="Carregando e processando dados...")
 def load_data(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Carrega BD (sheet 'BD') e FROTAS (sheet 'FROTAS'). Ajusta nomes e tipos com segurança."""
+    """
+    Carrega planilhas BD e FROTAS. Faz tentativas de mapear colunas por aliases
+    para evitar erros de KeyError por pequenas diferenças de nomenclatura.
+    """
+    # tenta abrir
     try:
-        # carrega as duas abas; se sheet não existir, aborta com mensagem
-        df_abast = pd.read_excel(path, sheet_name="BD", skiprows=2)
+        df_bd = pd.read_excel(path, sheet_name="BD", skiprows=2)
         df_frotas = pd.read_excel(path, sheet_name="FROTAS", skiprows=1)
     except FileNotFoundError:
         st.error(f"Arquivo não encontrado em `{path}`")
         st.stop()
     except ValueError as e:
-        if "Sheet name" in str(e):
-            st.error("Verifique se as planilhas 'BD' e 'FROTAS' existem no arquivo.")
-            st.stop()
-        else:
-            raise
+        # sheet not found ou outro
+        st.error("Erro ao abrir o arquivo ou planilhas. Verifique se as abas 'BD' e 'FROTAS' existem.")
+        st.stop()
 
-    # Normaliza frotas
-    df_frotas = df_frotas.rename(columns={"COD_EQUIPAMENTO": "Cod_Equip"}).drop_duplicates(subset=["Cod_Equip"])
+    # Normalizar nomes de colunas de df_bd através de aliases
+    bd_cols = list(df_bd.columns)
+    rename_map = {}
+
+    # lista de colunas padrão que esperamos no BD (tentaremos mapear)
+    expected_bd = ["Data", "Cod_Equip", "Descricao_Equip", "Qtde_Litros", "Km_Hs_Rod",
+                   "Media", "Media_P", "Perc_Media", "Ton_Cana", "Litros_Ton",
+                   "Ref1", "Ref2", "Unidade", "Safra", "Mes_Excel", "Semana_Excel",
+                   "Classe_Original", "Classe_Operacional", "Descricao_Proprietario_Original",
+                   "Potencia_CV_Abast", COL_KM_HR_ATUAL]
+
+    for std in expected_bd:
+        aliases = COLUMN_ALIASES.get(std, [std])
+        found = find_column_by_alias(bd_cols, aliases)
+        if found:
+            rename_map[found] = std
+
+    # aplica rename (se mapear algo)
+    if rename_map:
+        df_bd = df_bd.rename(columns=rename_map)
+
+    # Para FROTAS
+    f_cols = list(df_frotas.columns)
+    rename_map_f = {}
+    # mapeia COD_EQUIPAMENTO -> Cod_Equip
+    cod_found = find_column_by_alias(f_cols, ["cod_equipamento", "cod_equip", "codigo_equip", "cod"])
+    if cod_found:
+        rename_map_f[cod_found] = "Cod_Equip"
+    # mapeia desalinhadas
+    desc_found = find_column_by_alias(f_cols, ["descricao_equipamento", "descricao", "descricao_equip"])
+    if desc_found:
+        rename_map_f[desc_found] = "DESCRICAO_EQUIPAMENTO"
+    placa_found = find_column_by_alias(f_cols, ["placa"])
+    if placa_found:
+        rename_map_f[placa_found] = "PLACA"
+    ano_found = find_column_by_alias(f_cols, ["ano_modelo", "anomodelo", "ano"])
+    if ano_found:
+        rename_map_f[ano_found] = "ANOMODELO"
+    # aplica
+    if rename_map_f:
+        df_frotas = df_frotas.rename(columns=rename_map_f)
+
+    # garante Cod_Equip presente em frotas
+    if "Cod_Equip" not in df_frotas.columns:
+        # tenta mapear a partir de BD
+        if "Cod_Equip" in df_bd.columns:
+            # cria frotas minimal a partir do BD
+            unique = df_bd[["Cod_Equip"]].dropna().drop_duplicates()
+            df_frotas = unique.rename(columns={"Cod_Equip": "Cod_Equip"})
+            df_frotas["DESCRICAO_EQUIPAMENTO"] = ""
+            df_frotas["PLACA"] = ""
+            df_frotas["ANOMODELO"] = np.nan
+        else:
+            st.error("Não foi possível identificar coluna de código do equipamento (Cod_Equip) em FROTAS nem em BD.")
+            st.stop()
+
+    # padroniza frota: remove duplicados
+    df_frotas = df_frotas.drop_duplicates(subset=["Cod_Equip"])
     df_frotas["ANOMODELO"] = pd.to_numeric(df_frotas.get("ANOMODELO", pd.Series()), errors="coerce")
+
+    # cria label para seleção
     df_frotas["label"] = (
         df_frotas["Cod_Equip"].astype(str)
         + " - "
@@ -92,154 +162,93 @@ def load_data(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         + ")"
     )
 
-    # Tenta mapear as colunas do BD sem forçar nome por posição — por causa de variações na planilha
-    # Se BD tiver exatamente as colunas esperadas por posição, podemos renomear com segurança.
-    expected = [
-        "Data", "Cod_Equip", "Descricao_Equip", "Qtde_Litros", "Km_Hs_Rod",
-        "Media", "Media_P", "Perc_Media", "Ton_Cana", "Litros_Ton",
-        "Ref1", "Ref2", "Unidade", "Safra", "Mes_Excel", "Semana_Excel",
-        "Classe_Original", "Classe_Operacional", "Descricao_Proprietario_Original",
-        "Potencia_CV_Abast"
-    ]
-    # renomeia por posição só se o número bater exatamente — evita ValueError
-    if df_abast.shape[1] == len(expected):
-        df_abast.columns = expected
-    else:
-        # tenta renomear por correspondência de nomes (case-insensitive)
-        rename_map = {}
-        for exp in expected:
-            keywords = [exp.lower()]
-            # acrescenta sinônimos simples
-            if "data" in exp.lower():
-                keywords += ["date"]
-            if "cod_equip" in exp.lower():
-                keywords += ["cod", "codigo", "equipamento", "cod_equipamento"]
-            if "descricao" in exp.lower():
-                keywords += ["descricao", "descrição", "descri"]
-            if "qtde" in exp.lower() or "litros" in exp.lower():
-                keywords += ["litros", "qtde", "quantidade"]
-            if "km" in exp.lower() or "Km_Hs_Rod" in exp:
-                keywords += ["km", "kms", "quilometro", "quilômetros", "quilometros", "km_hs_rod"]
-            if "unidade" in exp.lower() or "unidade" in exp:
-                keywords += ["unid", "unidade", "unid.", "un."]
-            # procura coluna no df_abast parecido
-            found = find_col_like(df_abast, keywords)
-            if found:
-                rename_map[found] = exp
-        if rename_map:
-            df_abast = df_abast.rename(columns=rename_map)
-        # se ainda faltar colunas esperadas, não forçamos — usaremos get(...) mais adiante
+    # agora prepara df_bd: se não existe 'Data' tenta encontrar
+    if "Data" not in df_bd.columns:
+        possible_date = find_column_by_alias(bd_cols, ["data", "date"])
+        if possible_date:
+            df_bd = df_bd.rename(columns={possible_date: "Data"})
+        else:
+            st.error("Coluna de data não encontrada na aba 'BD'. Verifique cabeçalhos.")
+            st.stop()
 
-    # Merge para enriquecer abast com dados de frota
-    # Se Cod_Equip não existir em abast, tenta detectar coluna equivalente
-    if "Cod_Equip" not in df_abast.columns:
-        # tenta descobrir coluna de código por heurística
-        candidate = find_col_like(df_abast, ["cod", "equip", "codigo"])
-        if candidate:
-            df_abast = df_abast.rename(columns={candidate: "Cod_Equip"})
-    # Se ainda não tem Cod_Equip, o merge ficará vazio; preferimos parar e avisar
-    if "Cod_Equip" not in df_abast.columns:
-        st.error("Coluna de equipamento (Cod_Equip) não encontrada na aba 'BD'. Verifique a planilha.")
-        st.stop()
+    # converte Data e filtra nulos
+    df_bd["Data"] = pd.to_datetime(df_bd["Data"], errors="coerce")
+    df_bd = df_bd.dropna(subset=["Data"])
 
-    df = pd.merge(df_abast, df_frotas, on="Cod_Equip", how="left")
-    # Data
-    if "Data" in df.columns:
-        df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
-        df.dropna(subset=["Data"], inplace=True)
-    else:
-        # sem coluna data nada de temporal funciona corretamente; avisamos mas continuamos
-        st.warning("Atenção: coluna 'Data' não encontrada em 'BD'. Algumas funcionalidades podem não funcionar corretamente.")
+    # Garantir que Cod_Equip exista no BD (tentar mapear)
+    if "Cod_Equip" not in df_bd.columns:
+        possible = find_column_by_alias(bd_cols, ["cod_equipamento", "cod_equip", "codigo_equip", "cod"])
+        if possible:
+            df_bd = df_bd.rename(columns={possible: "Cod_Equip"})
+        else:
+            st.error("Coluna do código do equipamento (Cod_Equip) não encontrada na aba 'BD'.")
+            st.stop()
 
-    # Campos derivados se Data existe
-    if "Data" in df.columns:
-        df["Mes"] = df["Data"].dt.month
-        df["Semana"] = df["Data"].dt.isocalendar().week
-        df["Ano"] = df["Data"].dt.year
-        df["AnoMes"] = df["Data"].dt.to_period("M").astype(str)
-        df["AnoSemana"] = df["Data"].dt.strftime("%Y-%U")
-    else:
-        df["Mes"] = np.nan
-        df["Semana"] = np.nan
-        df["Ano"] = np.nan
-        df["AnoMes"] = np.nan
-        df["AnoSemana"] = np.nan
+    # Merge BD + Frotas
+    df = pd.merge(df_bd, df_frotas, on="Cod_Equip", how="left", suffixes=("", "_frota"))
 
-    # numéricos seguros: tenta converter se col existir
+    # campos derivados de data
+    df["Mes"] = df["Data"].dt.month
+    df["Semana"] = df["Data"].dt.isocalendar().week
+    df["Ano"] = df["Data"].dt.year
+    df["AnoMes"] = df["Data"].dt.to_period("M").astype(str)
+    df["AnoSemana"] = df["Data"].dt.strftime("%Y-%U")
+
+    # numéricos seguros
     for col in ["Qtde_Litros", "Media", "Media_P", "Km_Hs_Rod", COL_KM_HR_ATUAL]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # marca / fazenda
+    # Marca / Fazenda
     if "Ref2" in df.columns:
         df["DESCRICAOMARCA"] = df["Ref2"].astype(str)
-    else:
-        df["DESCRICAOMARCA"] = df.get("DESCRICAOMARCA", "").astype(str)
-    df["Fazenda"] = df.get("Ref1", "").astype(str)
+    elif "DESCRICAOMARCA" not in df.columns:
+        df["DESCRICAOMARCA"] = ""
 
-    # Detecta coluna de medição atual (KM_HR_Atual ou outro candidato):
-    # 1) Se COL_KM_HR_ATUAL explicitamente presente (ex.: você criou esta coluna), usa-a.
-    # 2) Senão, tenta encontrar colunas semelhantes ("QUILOMETROS","HORAS","KM","Km_Atual", etc.)
-    valor_col = None
+    if "Ref1" in df.columns:
+        df["Fazenda"] = df["Ref1"].astype(str)
+    elif "Fazenda" not in df.columns:
+        df["Fazenda"] = ""
+
+    # cria coluna unificada de valor atual (usada em manutenção)
     if COL_KM_HR_ATUAL in df.columns:
-        valor_col = COL_KM_HR_ATUAL
-        df["Valor_Atual"] = pd.to_numeric(df[valor_col], errors="coerce")
+        df["Valor_Atual"] = df[COL_KM_HR_ATUAL]
     else:
-        # candidatos comuns
-        cand_cols = ["KM", "Km", "Km_Atual", "KmAtual", "KM_ATUAL", "QUILOMETROS", "Quilometros", "HORAS", "Horas", "Hodometro", "Hodômetro", "Horimetro", "Horímetro"]
-        # procura coluna numérica entre candidatos
-        found_num = find_first_numeric_col(df, [c for c in cand_cols if c in df.columns])
-        if found_num:
-            valor_col = found_num
-            df["Valor_Atual"] = pd.to_numeric(df[found_num], errors="coerce")
+        # fallback: pega último Km_Hs_Rod por equipamento
+        if "Km_Hs_Rod" in df.columns:
+            last_km = df.sort_values(["Cod_Equip", "Data"]).groupby("Cod_Equip")["Km_Hs_Rod"].last()
+            df = df.merge(last_km.rename("Km_Last_from_hist"), on="Cod_Equip", how="left")
+            df["Valor_Atual"] = df["Km_Last_from_hist"]
         else:
-            # fallback para Km_Hs_Rod do próprio histórico (último por equipamento)
-            if "Km_Hs_Rod" in df.columns:
-                last_km = df.sort_values(["Cod_Equip", "Data"]).groupby("Cod_Equip")["Km_Hs_Rod"].last()
-                df = df.merge(last_km.rename("Km_Last_from_hist"), on="Cod_Equip", how="left")
-                df["Valor_Atual"] = df["Km_Last_from_hist"]
-            else:
-                df["Valor_Atual"] = np.nan
+            df["Valor_Atual"] = np.nan
 
-    # detecta coluna Unid/Unidade (ex.: 'QUILÔMETROS'/'HORAS' no BD) preferindo colunas existentes
-    unid_col = None
-    for candidate in ["Unidade","Unid","UNID","UNIDADE","Unidade_med","Unidade_medido","Unid."]:
-        if candidate in df.columns:
-            unid_col = candidate
-            break
-    if unid_col:
-        df["Unidade"] = df[unid_col].astype(str)
-    else:
-        # tenta pegar do histórico antes do merge (df_abast)
-        found_un = find_col_like(df_abast, ["unid", "unidade", "quil", "hora", "hor"])
-        if found_un:
-            df["Unidade"] = df_abast[found_un].astype(str)
-        else:
-            # fallback vazio
-            df["Unidade"] = ""
+    # Garantir coluna Unid: tentar mapear
+    if "Unidade" not in df.columns:
+        # procurar um alias em bd_cols
+        possible_unid = find_column_by_alias(bd_cols, ["unidade", "unid", "tipo_unidade", "unidad"])
+        if possible_unid:
+            df = df.rename(columns={possible_unid: "Unidade"})
+    if "Unidade" not in df.columns:
+        df["Unidade"] = np.nan
 
     return df, df_frotas
 
 def save_maintenance_log(excel_path: str, entries_df: pd.DataFrame, sheet_name: str = MANUT_LOG_SHEET):
-    """
-    Salva (append) as entradas de manutenção em uma aba MANUTENCAO_LOG.
-    Se a aba existir, carrega e concatena, senão cria.
-    """
-    # garante formato de data/hora
+    """Salva/concatena entradas de manutenção em MANUTENCAO_LOG no Excel."""
+    if entries_df.empty:
+        return True
     if "Timestamp" in entries_df.columns:
         entries_df["Timestamp"] = pd.to_datetime(entries_df["Timestamp"])
-
-    # se arquivo não existir, cria com o sheet
+    # cria arquivo se não existir
     if not Path(excel_path).exists():
         try:
             with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
                 entries_df.to_excel(writer, sheet_name=sheet_name, index=False)
             return True
         except Exception as e:
-            st.error(f"Erro ao criar arquivo Excel para log: {e}")
+            st.error(f"Erro ao criar arquivo Excel: {e}")
             return False
-
-    # se existir, lê workbook e regrava com sheet atualizado
+    # se existir arquivo, tenta ler e concatenar
     try:
         book = load_workbook(excel_path)
         if sheet_name in book.sheetnames:
@@ -247,7 +256,6 @@ def save_maintenance_log(excel_path: str, entries_df: pd.DataFrame, sheet_name: 
             combined = pd.concat([existing, entries_df], ignore_index=True)
         else:
             combined = entries_df
-
         with pd.ExcelWriter(excel_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
             combined.to_excel(writer, sheet_name=sheet_name, index=False)
         return True
@@ -255,104 +263,88 @@ def save_maintenance_log(excel_path: str, entries_df: pd.DataFrame, sheet_name: 
         st.error(f"Erro ao gravar log de manutenção no Excel: {e}")
         return False
 
-# --------- Funções de manutenção / cálculo ------------
+# ---------------- Manutenção / cálculos ---------------
 def build_maintenance_dataframe(df_frotas: pd.DataFrame, df_abast: pd.DataFrame, class_intervals: dict,
                                 km_default: int, hr_default: int):
     """
-    Constrói um dataframe com próximas revisões por equipamento usando:
-    - df_frotas (base cadastral)
-    - df_abast (pode conter Valor_Atual e Unidade)
-    - class_intervals: dict[classe] = {"rev_km":[..3], "rev_hr":[..3]}
-    - km_default / hr_default: valores default se não houver por classe
-    Returns mf (frota enriched)
+    Cria dataframe de manutenções: usa o último Valor_Atual do BD por equipamento.
+    class_intervals: {classe: {"rev_km":[r1,r2,r3], "rev_hr":[r1,r2,r3]}}
     """
     mf = df_frotas.copy()
-
-    # busca valor atual por equipamento (procura na aba BD se existir)
-    # tenta ler a última medição (Valor_Atual) da aba BD
-    try:
+    # pega último Valor_Atual por Cod_Equip do BD
+    last_vals = pd.Series(dtype=float)
+    if "Valor_Atual" in df_abast.columns:
         last_vals = df_abast.sort_values(["Cod_Equip", "Data"]).groupby("Cod_Equip")["Valor_Atual"].last()
-    except Exception:
-        last_vals = pd.Series(dtype=float)
-
     mf = mf.set_index("Cod_Equip")
     mf["Km_Hr_Atual"] = last_vals.reindex(mf.index)
     mf = mf.reset_index()
 
-    # Unidade: pega último 'Unidade' por equipamento do histórico (se existir)
-    try:
+    # pega Unid último do BD
+    last_unid = pd.Series(dtype=object)
+    if "Unidade" in df_abast.columns:
         last_unid = df_abast.sort_values(["Cod_Equip", "Data"]).groupby("Cod_Equip")["Unidade"].last()
-    except Exception:
-        last_unid = pd.Series(dtype=object)
     mf = mf.set_index("Cod_Equip")
     mf["Unid_Last"] = last_unid.reindex(mf.index)
     mf = mf.reset_index()
 
-    # Se existe 'Unid' em df_frotas, prioriza, senão usa Unid_Last
+    # se existe Unid em frotas, prioriza
     if "Unid" in df_frotas.columns:
         mf["Unid"] = df_frotas.set_index("Cod_Equip").reindex(mf["Cod_Equip"])["Unid"].values
         mf["Unid"] = np.where(pd.isna(mf["Unid"]), mf["Unid_Last"], mf["Unid"])
     else:
         mf["Unid"] = mf["Unid_Last"]
 
-    # agora calcular para cada revisão (3 revisões) - define intervalos por classe (listas de 3)
-    rev_nums = [1, 2, 3]
-    for r in rev_nums:
-        def choose_km_interval(cls):
-            if cls in class_intervals:
-                v = class_intervals[cls].get("rev_km")
-                if isinstance(v, list) and len(v) >= r:
-                    return v[r-1]
-                if isinstance(v, (int, float)):
-                    return v
-            # fallback padrão
+    # configura 3 revisões por equipamento com intervalos por classe
+    for r in [1, 2, 3]:
+        def get_km_interval(cls):
+            v = class_intervals.get(cls, {})
+            revs = v.get("rev_km")
+            if isinstance(revs, (list, tuple)) and len(revs) >= r:
+                return revs[r-1]
+            # se não for lista, retornar single or default
+            if isinstance(revs, (int, float)):
+                return revs
             return km_default * r
-        def choose_hr_interval(cls):
-            if cls in class_intervals:
-                v = class_intervals[cls].get("rev_hr")
-                if isinstance(v, list) and len(v) >= r:
-                    return v[r-1]
-                if isinstance(v, (int, float)):
-                    return v
+
+        def get_hr_interval(cls):
+            v = class_intervals.get(cls, {})
+            revs = v.get("rev_hr")
+            if isinstance(revs, (list, tuple)) and len(revs) >= r:
+                return revs[r-1]
+            if isinstance(revs, (int, float)):
+                return revs
             return hr_default * r
 
-        mf[f"Rev{r}_Interval"] = mf["Classe_Operacional"].apply(lambda cls: choose_km_interval(cls))
-        mf[f"Rev{r}_Interval_HR"] = mf["Classe_Operacional"].apply(lambda cls: choose_hr_interval(cls))
+        mf[f"Rev{r}_Interval"] = mf["Classe_Operacional"].apply(lambda cls: get_km_interval(cls))
+        mf[f"Rev{r}_Interval_HR"] = mf["Classe_Operacional"].apply(lambda cls: get_hr_interval(cls))
 
-    # calc next due based on unit (Km_Hr_Atual)
+    # calcula próximos vencimentos (considera Unid para decidir KM vs HR)
     def calc_next(row, r):
         cur = row.get("Km_Hr_Atual", np.nan)
         unit = str(row.get("Unid", "")).strip().upper() if pd.notna(row.get("Unid")) else ""
         if pd.isna(cur):
-            return (np.nan, np.nan)  # next, to_go
-        if "QUIL" in unit or "KM" in unit or unit.startswith("K"):
+            return (np.nan, np.nan)
+        if "QUIL" in unit or unit.startswith("KM"):
             interval = row.get(f"Rev{r}_Interval", np.nan)
             next_due = cur + (interval if not pd.isna(interval) else np.nan)
-            to_go = next_due - cur
-            return (next_due, to_go)
-        elif "HOR" in unit or "HR" in unit or unit.startswith("H"):
+            return (next_due, next_due - cur)
+        if "HOR" in unit or unit.startswith("HR"):
             interval = row.get(f"Rev{r}_Interval_HR", np.nan)
             next_due = cur + (interval if not pd.isna(interval) else np.nan)
-            to_go = next_due - cur
-            return (next_due, to_go)
-        else:
-            # sem unidade clara, usa km por padrão
-            interval = row.get(f"Rev{r}_Interval", np.nan)
-            next_due = cur + (interval if not pd.isna(interval) else np.nan)
-            to_go = next_due - cur
-            return (next_due, to_go)
+            return (next_due, next_due - cur)
+        # sem unidade clara: assumir KM por padrão
+        interval = row.get(f"Rev{r}_Interval", np.nan)
+        next_due = cur + (interval if not pd.isna(interval) else np.nan)
+        return (next_due, next_due - cur)
 
-    for r in rev_nums:
+    for r in [1, 2, 3]:
         mf[[f"Rev{r}_Next", f"Rev{r}_To_Go"]] = mf.apply(lambda row: pd.Series(calc_next(row, r)), axis=1)
 
-    # flags default
     mf["Due_Rev"] = False
     mf["Due_Oil"] = False
-    mf["Any_Due"] = False
-
     return mf
 
-# ---------------- Layout / CSS leve ----------------
+# ---------------- Layout / CSS -------------
 def apply_modern_css(dark: bool):
     bg = "#0e1117" if dark else "#FFFFFF"
     card_bg = "#111318" if dark else "#f8f9fa"
@@ -382,49 +374,48 @@ def main():
     st.set_page_config(page_title="Dashboard de Frotas e Abastecimentos", layout="wide")
     st.title("📊 Dashboard de Frotas e Abastecimentos — Manutenção Integrada")
 
-    # Carrega dados
     df, df_frotas = load_data(EXCEL_PATH)
 
-    # Sidebar controles gerais + manutenção defaults
+    # Sidebar
     with st.sidebar:
         st.header("Configurações")
         dark_mode = st.checkbox("🕶️ Dark Mode", value=False)
         st.markdown("---")
         st.header("Visual")
-        top_n = st.slider("Top N classes antes de agrupar 'Outros'", min_value=3, max_value=30, value=10)
-        hide_text_threshold = st.slider("Esconder valores nas barras quando categorias >", min_value=5, max_value=40, value=8)
+        top_n = st.slider("Top N classes antes de agrupar 'Outros'", 3, 30, 10)
+        hide_text_threshold = st.slider("Esconder valores nas barras quando categorias >", 5, 40, 8)
         st.markdown("---")
-        st.header("Manutenção - Defaults globais")
-        km_interval_default = st.number_input("Intervalo padrão (km) revisão", min_value=100, max_value=200000, value=10000, step=100)
-        hr_interval_default = st.number_input("Intervalo padrão (horas) lubrificação", min_value=1, max_value=5000, value=250, step=1)
-        km_due_threshold = st.number_input("Alerta revisão se faltar <= (km)", min_value=10, max_value=5000, value=500, step=10)
-        hr_due_threshold = st.number_input("Alerta lubrificação se faltar <= (horas)", min_value=1, max_value=500, value=20, step=1)
+        st.header("Manutenção - Defaults")
+        km_interval_default = st.number_input("Intervalo padrão (km) revisão", 100, 200000, 10000, step=100)
+        hr_interval_default = st.number_input("Intervalo padrão (horas) lubrificação", 1, 5000, 250, step=1)
+        km_due_threshold = st.number_input("Alerta revisão se faltar <= (km)", 10, 5000, 500, step=10)
+        hr_due_threshold = st.number_input("Alerta lubrificação se faltar <= (horas)", 1, 500, 20, step=1)
 
-    # Aplica CSS
     apply_modern_css(dark_mode)
     palette = PALETTE_DARK if dark_mode else PALETTE_LIGHT
     plotly_template = "plotly_dark" if dark_mode else "plotly"
 
-    # Configurações por classe (sessão) - inicializa se necessário
+    # session state para intervalos por classe
     if "manut_by_class" not in st.session_state:
         st.session_state.manut_by_class = {}
         classes = sorted(df["Classe_Operacional"].dropna().unique()) if "Classe_Operacional" in df.columns else []
         for cls in classes:
             st.session_state.manut_by_class[cls] = {
-                "rev_km": [km_interval_default, km_interval_default*2, km_interval_default*3],
-                "rev_hr": [hr_interval_default, hr_interval_default*2, hr_interval_default*3]
+                "rev_km": [km_interval_default, km_interval_default * 2, km_interval_default * 3],
+                "rev_hr": [hr_interval_default, hr_interval_default * 2, hr_interval_default * 3],
             }
 
-    # Layout - abas (inclui Manutenção)
+    # abas
     tabs = st.tabs(["📊 Análise de Consumo", "🔎 Consulta de Frota", "📋 Tabela Detalhada", "⚙️ Configurações", "🛠️ Manutenção"])
 
-    # ---------- Aba 1: Análise (simplificada) ----------
+    # ---------- Aba 1 ----------
     with tabs[0]:
         st.header("Análise de Consumo")
-        st.info("Visual principal — (melhorias aplicadas).")
-        # Exemplo rápido: média por classe com agrupamento 'Outros'
         df_plot = df.copy()
-        df_plot.columns = df_plot.columns.str.strip().str.replace(" ", "_")
+        # garantir coluna de classe presente (mapeamento robusto já feito)
+        if "Classe_Operacional" not in df_plot.columns:
+            df_plot["Classe_Operacional"] = "Sem Classe"
+        df_plot["Classe_Operacional"] = df_plot["Classe_Operacional"].fillna("Sem Classe")
         df_plot["Classe_Grouped"] = df_plot["Classe_Operacional"].apply(lambda s: "Outros" if s in OUTROS_CLASSES else s)
         media_op_full = df_plot.groupby("Classe_Grouped")["Media"].mean().reset_index()
         media_op_full["Media"] = media_op_full["Media"].round(1)
@@ -441,27 +432,27 @@ def main():
         fig.update_layout(template=plotly_template, margin=dict(b=140))
         st.plotly_chart(fig, use_container_width=True)
 
-    # ---------- Aba 2: Consulta de Frota ----------
+    # ---------- Aba 2 ----------
     with tabs[1]:
         st.header("Ficha Individual do Equipamento")
         equip_label = st.selectbox("Selecione o Equipamento", options=df_frotas.sort_values("Cod_Equip")["label"])
         if equip_label:
-            cod_sel = int(equip_label.split(" - ")[0])
+            cod_sel = int(str(equip_label).split(" - ")[0])
             dados_eq = df_frotas.query("Cod_Equip == @cod_sel").iloc[0]
-            # busca valor atual no histórico/enriquecido
-            last_val = df.sort_values(["Cod_Equip", "Data"]).query("Cod_Equip == @cod_sel").groupby("Cod_Equip")["Valor_Atual"].last()
-            val = last_val.iloc[0] if not last_val.empty else np.nan
-            unidade = df.sort_values(["Cod_Equip", "Data"]).query("Cod_Equip == @cod_sel").groupby("Cod_Equip")["Unidade"].last().iloc[0] if not last_val.empty else ""
+            # último valor atual
+            last_val_series = df.sort_values(["Cod_Equip", "Data"]).query("Cod_Equip == @cod_sel").groupby("Cod_Equip")["Valor_Atual"].last()
+            val = last_val_series.iloc[0] if not last_val_series.empty else np.nan
+            unid_series = df.sort_values(["Cod_Equip", "Data"]).query("Cod_Equip == @cod_sel").groupby("Cod_Equip")["Unidade"].last()
+            unidade = unid_series.iloc[0] if not unid_series.empty else ""
             st.subheader(f"{dados_eq.get('DESCRICAO_EQUIPAMENTO','–')} ({dados_eq.get('PLACA','–')})")
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Status", dados_eq.get("ATIVO", "–"))
             c2.metric("Placa", dados_eq.get("PLACA", "–"))
             c3.metric("Medida Atual", f"{formatar_brasileiro(val)} {unidade}")
-            # média geral do equipamento
             consumo_eq = df.query("Cod_Equip == @cod_sel")
             c4.metric("Média Geral", formatar_brasileiro(consumo_eq["Media"].mean()))
 
-    # ---------- Aba 3: Tabela Detalhada ----------
+    # ---------- Aba 3 ----------
     with tabs[2]:
         st.header("Tabela Detalhada de Abastecimentos")
         cols = ["Data", "Cod_Equip", "Descricao_Equip", "PLACA", "DESCRICAOMARCA", "ANOMODELO", "Qtde_Litros", "Media", "Media_P", "Classe_Operacional", COL_KM_HR_ATUAL, "Unidade"]
@@ -477,11 +468,11 @@ def main():
         gb.configure_selection("single", use_checkbox=True)
         AgGrid(df_tab, gridOptions=gb.build(), height=520, allow_unsafe_jscode=True)
 
-    # ---------- Aba 4: Configurações ----------
+    # ---------- Aba 4 ----------
     with tabs[3]:
         st.header("Padrões por Classe Operacional (Alertas & Intervalos)")
-        st.markdown("Aqui você pode ajustar os intervalos por classe para as 3 revisões (KM e HORAS).")
         classes = sorted(df["Classe_Operacional"].dropna().unique()) if "Classe_Operacional" in df.columns else []
+        st.markdown("Configure intervalos (km e horas) para as 3 revisões por classe.")
         for cls in classes:
             st.subheader(str(cls))
             col1, col2 = st.columns(2)
@@ -497,19 +488,19 @@ def main():
                 nh3 = st.number_input(f"{cls} → Rev3 (hr)", min_value=0, max_value=1000000, value=int(rev_hr[2]), key=f"{cls}_r3hr")
             st.session_state.manut_by_class[cls] = {"rev_km":[int(nk1), int(nk2), int(nk3)], "rev_hr":[int(nh1), int(nh2), int(nh3)]}
 
-    # ---------- Aba 5: Manutenção ----------
+    # ---------- Aba 5 - Manutenção ----------
     with tabs[4]:
         st.header("Controle de Revisões e Lubrificação")
-        st.markdown("O sistema usa a coluna `KM_HR_Atual` (na aba BD) se existir, senão tenta detectar automaticamente. A coluna `Unid`/`Unidade` (ex.: 'QUILÔMETROS' ou 'HORAS') indica a unidade principal usada para cada equipamento.")
+        st.markdown("O sistema usa a coluna `KM_HR_Atual` (na aba BD) quando disponível; senão usa o último Km/Hs do histórico. A coluna `Unidade` em BD deve indicar `QUILÔMETROS` ou `HORAS` (ou similar).")
 
-        # monta class_intervals a partir do session_state
+        # montar class_intervals
         class_intervals = {}
-        for k, v in st.session_state.manut_by_class.items():
+        for k,v in st.session_state.manut_by_class.items():
             class_intervals[k] = {"rev_km": v.get("rev_km", []), "rev_hr": v.get("rev_hr", [])}
 
         mf = build_maintenance_dataframe(df_frotas, df, class_intervals, int(km_interval_default), int(hr_interval_default))
 
-        # calcula flags de proximidade
+        # calcular flags de proximidade
         def set_due_flags(row):
             due_km = False
             due_hr = False
@@ -518,10 +509,10 @@ def main():
                 to_go = row.get(f"Rev{r}_To_Go", np.nan)
                 if pd.isna(to_go):
                     continue
-                if "QUIL" in unit or unit.startswith("KM") or unit.startswith("K"):
+                if "QUIL" in unit or unit.startswith("KM"):
                     if to_go <= km_due_threshold:
                         due_km = True
-                elif "HOR" in unit or unit.startswith("HR") or unit.startswith("H"):
+                elif "HOR" in unit or unit.startswith("HR"):
                     if to_go <= hr_due_threshold:
                         due_hr = True
                 else:
@@ -548,7 +539,7 @@ def main():
             st.dataframe(df_due[available].reset_index(drop=True), use_container_width=True)
 
             st.markdown("### Marcar revisões como concluídas")
-            st.markdown("Selecione o que foi feito e clique em **Salvar ações** — isso gravará um registro na aba `MANUTENCAO_LOG` do arquivo Excel.")
+            st.markdown("Selecione o que foi feito e clique em **Salvar ações** — isso gravará um registro na aba `MANUTENCAO_LOG` do Excel.")
 
             actions = []
             for idx, row in df_due.reset_index(drop=True).iterrows():
@@ -561,7 +552,7 @@ def main():
                 cb1 = cols[0].checkbox(f"Rev1 (cod {cod})", key=f"r1_{cod}")
                 cb2 = cols[1].checkbox(f"Rev2 (cod {cod})", key=f"r2_{cod}")
                 cb3 = cols[2].checkbox(f"Rev3 (cod {cod})", key=f"r3_{cod}")
-                cbd = cols[3].checkbox(f"Lubrificação (cod {cod})", key=f"lub_{cod}")
+                cbd = cols[3].checkbox(f"Lubr. (cod {cod})", key=f"lub_{cod}")
                 if cb1:
                     actions.append({"Cod_Equip": cod, "Tipo":"Rev1", "Valor_Atual": cur_val, "Unid":unit})
                 if cb2:
@@ -584,7 +575,7 @@ def main():
                             "Tipo": a["Tipo"],
                             "Valor_Atual": a["Valor_Atual"],
                             "Unid": a["Unid"],
-                            "Usuario": st.session_state.get("usuario","(anon)"),
+                            "Usuario": st.session_state.get("usuario","(anon)")
                         })
                     entries_df = pd.DataFrame(rows)
                     ok = save_maintenance_log(EXCEL_PATH, entries_df, MANUT_LOG_SHEET)
