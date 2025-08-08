@@ -130,15 +130,32 @@ def calcular_kpis_consumo(df: pd.DataFrame) -> dict:
 
 def generate_pdf(images: list[bytes]) -> bytes:
     pdf = FPDF(orientation="P", unit="mm", format="A4")
+    temp_files = []
 
-    for img_bytes in images:
-        pdf.add_page()
-        img_stream = io.BytesIO(img_bytes)
-        # informa ao FPDF que o conteúdo é PNG
-        pdf.image(name=img_stream, x=10, y=20, w=190, type="PNG")
+    try:
+        for img_bytes in images:
+            # cria um arquivo .png temporário
+            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            tmp.write(img_bytes)
+            tmp.flush()
+            tmp.close()
+            temp_files.append(tmp.name)
 
-    # retorna o PDF como bytes no encoding latin1
-    return pdf.output(dest="S").encode("latin1")
+            # adiciona página e insere a imagem
+            pdf.add_page()
+            pdf.image(tmp.name, x=10, y=20, w=190)
+
+        # gera o PDF em memória e codifica
+        pdf_bytes = pdf.output(dest="S").encode("latin1")
+    finally:
+        # remove todos os arquivos temporários
+        for path in temp_files:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    return 
 
 def main():
     st.set_page_config(page_title="Dashboard de Frotas e Abastecimentos", layout="wide")
