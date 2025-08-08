@@ -47,7 +47,7 @@ def load_data(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         + ")"
     )
 
-    # Normaliza abastecimento
+    # Normaliza abastecimento (mantendo nomes originais)
     df_abast.columns = [
         "Data", "Cod_Equip", "Descricao_Equip", "Qtde_Litros", "Km_Hs_Rod",
         "Media", "Media_P", "Perc_Media", "Ton_Cana", "Litros_Ton",
@@ -68,24 +68,33 @@ def load_data(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     df["AnoSemana"] = df["Data"].dt.strftime("%Y-%U")
 
     # Numéricos
-    for col in ["Qtde_Litros", "Media", "Media_P"]:
+    for col in ["Qtde_Litros", "Media", "Media_P", "Km_Hs_Rod"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Marca / Fazenda
+    # Marca / Fazenda (mantém coluna, mas não será usada em filtros)
     df["DESCRICAOMARCA"] = df["Ref2"].astype(str)
     df["Fazenda"] = df["Ref1"].astype(str)
+
+    # --- Cálculo seguro de Consumo km/l ---
+    # Usa Km_Hs_Rod (km) e Qtde_Litros (litros). Se Qtde_Litros <= 0, coloca NaN.
+    if "Km_Hs_Rod" in df.columns and "Qtde_Litros" in df.columns:
+        df["Consumo_km_l"] = np.where(df["Qtde_Litros"] > 0, df["Km_Hs_Rod"] / df["Qtde_Litros"], np.nan)
+        # Sobrescreve 'Media' para manter compatibilidade com o restante do código
+        df["Media"] = df["Consumo_km_l"]
+    else:
+        df["Consumo_km_l"] = np.nan
 
     return df, df_frotas
 
 @st.cache_data
 def filtrar_dados(df: pd.DataFrame, opts: dict) -> pd.DataFrame:
-    """Filtra o DataFrame conforme opções selecionadas."""
+    """Filtra o DataFrame conforme opções selecionadas.
+    OBS: filtro de Marca foi removido conforme solicitado."""
     mask = (
         df["Safra"].isin(opts["safras"]) &
         df["Ano"].isin(opts["anos"]) &
         df["Mes"].isin(opts["meses"]) &
-        df["DESCRICAOMARCA"].isin(opts["marcas"]) &
         df["Classe_Operacional"].isin(opts["classes_op"])
     )
     return df.loc[mask].copy()
@@ -148,7 +157,7 @@ def apply_modern_css(dark: bool):
 # ---------------- App principal ----------------
 def main():
     st.set_page_config(page_title="Dashboard de Frotas e Abastecimentos", layout="wide")
-    st.title("📊 Dashboard de Frotas e Abastecimentos — Visual Moderno")
+    st.title("📊 Dashboard de Frotas e Abastecimentos — Visual Moderno (Light Premium)")
 
     # Carrega dados
     df, df_frotas = load_data(EXCEL_PATH)
@@ -156,7 +165,7 @@ def main():
     # Sidebar: tema e filtros
     with st.sidebar:
         st.header("Configurações")
-        dark_mode = st.checkbox("🕶️ Dark Mode", value=False)
+        dark_mode = st.checkbox("🕶️ Dark Mode (aplica visual escuro)", value=False)
         st.markdown("---")
         st.header("📅 Filtros")
         # Limpar filtros
@@ -171,20 +180,18 @@ def main():
     palette = PALETTE_DARK if dark_mode else PALETTE_LIGHT
     plotly_template = "plotly_dark" if dark_mode else "plotly"
 
-    # Filtro (função reorganizada para UX moderno)
+    # Filtro (função reorganizada para UX moderno) - **sem filtro de marca**
     def sidebar_filters_local(df: pd.DataFrame) -> dict:
         # Defaults defensivos
         safra_opts = sorted(df["Safra"].dropna().unique()) if "Safra" in df.columns else []
         ano_opts = sorted(df["Ano"].dropna().unique()) if "Ano" in df.columns else []
-        marca_opts = sorted(df["DESCRICAOMARCA"].dropna().unique()) if "DESCRICAOMARCA" in df.columns else []
         classe_opts = sorted(df["Classe_Operacional"].dropna().unique()) if "Classe_Operacional" in df.columns else []
 
-        # Seletores com mais espaço
+        # Seletores
         sel_safras = st.sidebar.multiselect("Safra", safra_opts, default=safra_opts[-1:] if safra_opts else [])
         sel_anos = st.sidebar.multiselect("Ano", ano_opts, default=ano_opts[-1:] if ano_opts else [])
         sel_meses = st.sidebar.multiselect("Mês (num)", sorted(df["Mes"].dropna().unique()) if "Mes" in df.columns else [], default=[datetime.now().month])
         st.sidebar.markdown("---")
-        sel_marcas = st.sidebar.multiselect("Marca", marca_opts, default=marca_opts if len(marca_opts) <= 10 else marca_opts[:5])
         sel_classes = st.sidebar.multiselect("Classe Operacional", classe_opts, default=classe_opts)
 
         # Garantias: se vazio, usa todos
@@ -194,8 +201,6 @@ def main():
             sel_anos = ano_opts
         if not sel_meses:
             sel_meses = sorted(df["Mes"].dropna().unique()) if "Mes" in df.columns else []
-        if not sel_marcas:
-            sel_marcas = marca_opts
         if not sel_classes:
             sel_classes = classe_opts
 
@@ -203,7 +208,6 @@ def main():
             "safras": sel_safras or [],
             "anos": sel_anos or [],
             "meses": sel_meses or [],
-            "marcas": sel_marcas or [],
             "classes_op": sel_classes or [],
         }
 
@@ -231,21 +235,37 @@ def main():
         ativos = int(df_frotas.query("ATIVO == 'ATIVO'").shape[0]) if "ATIVO" in df_frotas.columns else 0
         idade_media = (datetime.now().year - df_frotas["ANOMODELO"].median()) if "ANOMODELO" in df_frotas.columns else 0
 
-        # KPI cards
+        # KPI cards (light premium style)
         k1, k2, k3, k4 = st.columns([1.6,1.6,1.4,1.4])
         with k1:
-            st.markdown('<div class="kpi-card"><div class="kpi-title">Litros Consumidos</div><div class="kpi-value">' + formatar_brasileiro(kpis["total_litros"]) + '</div></div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="kpi-card"><div class="kpi-title">Litros Consumidos</div>'
+                f'<div class="kpi-value">{formatar_brasileiro(kpis["total_litros"])}</div></div>',
+                unsafe_allow_html=True
+            )
         with k2:
-            st.markdown('<div class="kpi-card"><div class="kpi-title">Média de Consumo</div><div class="kpi-value">' + formatar_brasileiro(kpis["media_consumo"]) + ' km/l</div></div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="kpi-card"><div class="kpi-title">Média de Consumo</div>'
+                f'<div class="kpi-value">{formatar_brasileiro(kpis["media_consumo"])} km/l</div></div>',
+                unsafe_allow_html=True
+            )
         with k3:
-            st.markdown('<div class="kpi-card"><div class="kpi-title">Veículos Ativos</div><div class="kpi-value">' + f"{ativos} / {total_eq}" + '</div></div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="kpi-card"><div class="kpi-title">Veículos Ativos</div>'
+                f'<div class="kpi-value">{ativos} / {total_eq}</div></div>',
+                unsafe_allow_html=True
+            )
         with k4:
-            st.markdown('<div class="kpi-card"><div class="kpi-title">Idade Média da Frota</div><div class="kpi-value">' + f"{idade_media:.0f} anos" + '</div></div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="kpi-card"><div class="kpi-title">Idade Média da Frota</div>'
+                f'<div class="kpi-value">{idade_media:.0f} anos</div></div>',
+                unsafe_allow_html=True
+            )
 
         st.markdown("### ")
         st.info(f"🔍 {len(df_f):,} registros após aplicação dos filtros")
 
-        # Gráfico 1 - Média por Classe Operacional
+        # Gráfico 1 - Média por Classe Operacional (usando Media = km/l)
         media_op = df_f.groupby("Classe_Operacional")["Media"].mean().reset_index()
         media_op["Media"] = media_op["Media"].round(1)
         hover_template_media = "Classe: %{x}<br>Média: %{y:.1f} km/l<extra></extra>"
@@ -297,7 +317,7 @@ def main():
                 # ambientes sem kaleido/plotly image export não quebram a execução
                 st.caption("Exportação de imagem não disponível no ambiente atual.")
 
-        # Gráfico 4 - Consumo acumulado por safra
+        # Gráfico 4 - Consumo acumulado por safra (usa Qtde_Litros)
         st.markdown("---")
         st.header("📈 Comparativo de Consumo Acumulado por Safra")
         safras = sorted(df["Safra"].dropna().unique())
