@@ -162,7 +162,7 @@ def main():
         # Limpar filtros
         if st.button("🔄 Limpar Filtros"):
             st.session_state.clear()
-            st.experimental_rerun()
+            st.rerun()
 
     # Aplica CSS leve
     apply_modern_css(dark_mode)
