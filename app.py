@@ -275,18 +275,39 @@ def main():
         )
         st.plotly_chart(fig_yoy, use_container_width=True)
 
-        # 6) Projeção Próximos 3 Meses (Média Móvel)
+                # 6) Projeção Próximos 3 Meses (Média Móvel)
         mov3 = df_month["Qtde_Litros"].rolling(3).mean()
-        last_val = mov3.dropna().iloc[-1]
-        proj_idx = pd.date_range(df_month.index.max()+pd.offsets.MonthBegin(), periods=3, freq="M")
-        proj = pd.Series([last_val]*3, index=proj_idx)
-        df_proj = pd.concat([df_month["Qtde_Litros"].rename("Consumo"), proj.rename("Consumo")])
+        clean_mov3 = mov3.dropna()
+
+        if clean_mov3.empty:
+            st.warning(
+                "Dados insuficientes para calcular média móvel de 3 meses. "
+                "A projeção não estará disponível."
+            )
+            # mantém apenas o histórico real
+            df_proj = df_month["Qtde_Litros"].rename("Consumo")
+        else:
+            last_val = clean_mov3.iloc[-1]
+            proj_idx = pd.date_range(
+                start=df_month.index.max() + pd.offsets.MonthBegin(),
+                periods=3,
+                freq="M"
+            )
+            proj = pd.Series([last_val] * 3, index=proj_idx, name="Consumo")
+
+            # concatena histórico real + projeção
+            df_proj = pd.concat([
+                df_month["Qtde_Litros"].rename("Consumo"),
+                proj
+            ])
+
         fig_proj = px.line(
             df_proj,
             title="Consumo Real + Projeção Próximos 3 Meses",
             labels={"index": "Data", "Consumo": "Litros"}
         )
         st.plotly_chart(fig_proj, use_container_width=True)
+
 
         # 7) Pareto: Top 20% dos Equipamentos
         cons_eq = df_f.groupby("Cod_Equip")["Qtde_Litros"].sum().sort_values(ascending=False)
