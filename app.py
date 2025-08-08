@@ -424,7 +424,7 @@ def main():
         st.info("Visual principal — (melhorias aplicadas).")
         # Exemplo rápido: média por classe com agrupamento 'Outros'
         df_plot = df.copy()
-        df_plot["Classe_Operacional"] = df_plot["Classe_Operacional"].fillna("Sem Classe")
+        df_plot.columns = df_plot.columns.str.strip().str.replace(" ", "_")
         df_plot["Classe_Grouped"] = df_plot["Classe_Operacional"].apply(lambda s: "Outros" if s in OUTROS_CLASSES else s)
         media_op_full = df_plot.groupby("Classe_Grouped")["Media"].mean().reset_index()
         media_op_full["Media"] = media_op_full["Media"].round(1)
