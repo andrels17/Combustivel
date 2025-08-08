@@ -279,76 +279,78 @@ def main():
                 )
             st.plotly_chart(fig_acum, use_container_width=True)
 
-    # --- ABA 2: Consulta de Frota ---
-    with tab_consulta:
-        st.header("🔎 Ficha Individual do Equipamento")
+   # --- ABA 2: Consulta de Frota ---
+with tab_consulta:
+    st.header("🔎 Ficha Individual do Equipamento")
 
-        # monta label amigável
-        df_frotas_completo['label'] = (
-            df_frotas_completo['Cod_Equip'].astype(str) + " - " +
-            df_frotas_completo['DESCRICAO_EQUIPAMENTO'].fillna('') + " (" +
-            df_frotas_completo['PLACA'].fillna('Sem Placa') + ")"
+    # monta label amigável
+    df_frotas_completo['label'] = (
+        df_frotas_completo['Cod_Equip'].astype(str) + " - " +
+        df_frotas_completo['DESCRICAO_EQUIPAMENTO'].fillna('') + " (" +
+        df_frotas_completo['PLACA'].fillna('Sem Placa') + ")"
+    )
+    equip_label = st.selectbox(
+        "Selecione o Equipamento",
+        options=df_frotas_completo.sort_values('Cod_Equip')['label']
+    )
+
+    if equip_label:
+        cod_sel = int(equip_label.split(" - ")[0])
+        dados_eq = df_frotas_completo.query("Cod_Equip == @cod_sel").iloc[0]
+        consumo_eq = df.query("Cod_Equip == @cod_sel").sort_values("Data", ascending=False)
+
+        st.subheader(f"{dados_eq['DESCRICAO_EQUIPAMENTO']}  ({dados_eq['PLACA']})")
+
+        # KPIs gerais
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Status", dados_eq['ATIVO'])
+        col2.metric("Placa", dados_eq['PLACA'])
+        col3.metric(
+            "Média Geral",
+            formatar_brasileiro(consumo_eq['Media'].mean())
         )
-        equip_selecionado_label = st.selectbox(
-            "Selecione o Equipamento",
-            options=df_frotas_completo.sort_values('Cod_Equip')['label']
+        col4.metric(
+            "Total Consumido (L)",
+            formatar_brasileiro(consumo_eq['Qtde_Litros'].sum())
         )
 
-        if equip_selecionado_label:
-            cod_sel = int(equip_selecionado_label.split(" - ")[0])
-            dados_eq = df_frotas_completo.query("Cod_Equip == @cod_sel").iloc[0]
-            consumo_eq = df.query("Cod_Equip == @cod_sel").sort_values("Data", ascending=False)
-
-            st.subheader(f"{dados_eq['DESCRICAO_EQUIPAMENTO']}  ({dados_eq['PLACA']})")
-
-            # KPIs básicos
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Status", dados_eq['ATIVO'])
-            c2.metric("Placa", dados_eq['PLACA'])
-            c3.metric(
-                "Média Geral",
-                formatar_brasileiro(consumo_eq['Media'].mean())
-            )
-            c4.metric(
-                "Total Consumido (L)",
-                formatar_brasileiro(consumo_eq['Qtde_Litros'].sum())
-            )
-
-            # KPIs de última safra e último abastecimento
-            if not consumo_eq.empty:
-                # Último abastecimento
-                ultimo = consumo_eq.iloc[0]
-                km_hr_ultimo = ultimo['Km_Hs_Rod']
-
-                # Dados da última safra
-                safra_ult = consumo_eq['Safra'].max()
-                df_safra = consumo_eq[consumo_eq['Safra'] == safra_ult]
-                total_ult_safra = df_safra['Qtde_Litros'].sum()
-                media_ult_safra = df_safra['Media'].mean()
+        # Calcula KPIs de último registro e última safra
+        if not consumo_eq.empty:
+            # 1) KM/Hr do último abastecimento (odômetro ou horímetro)
+            ultimo = consumo_eq.iloc[0]
+            km_hs_ultimo = ultimo['Km_Hs_Rod']
+            if pd.notna(km_hs_ultimo):
+                # converte para inteiro (ou deixa decimal se precisar)
+                km_hs_display = f"{int(km_hs_ultimo)}"
             else:
-                km_hr_ultimo = total_ult_safra = media_ult_safra = None
-                safra_ult = None
+                km_hs_display = "–"
 
-            c5, c6, c7 = st.columns(3)
-            c5.metric(
-                "KM/Hr Último Abastecimento",
-                formatar_brasileiro(km_hr_ultimo) if km_hr_ultimo is not None else "–"
-            )
-            c6.metric(
-                f"Total Última Safra ({safra_ult})",
-                formatar_brasileiro(total_ult_safra) if total_ult_safra else "–"
-            )
-            c7.metric(
-                "Média Última Safra",
-                formatar_brasileiro(media_ult_safra) if media_ult_safra else "–"
-            )
+            # 2) Total e 3) Média da última safra
+            safra_ult = consumo_eq['Safra'].max()
+            df_safra = consumo_eq[consumo_eq['Safra'] == safra_ult]
+            total_ult_safra = df_safra['Qtde_Litros'].sum()
+            media_ult_safra = df_safra['Media'].mean()
+        else:
+            km_hs_display = total_ult_safra = media_ult_safra = "–"
+            safra_ult = None
 
-            st.markdown("---")
-            st.subheader("Informações Cadastrais")
-            st.dataframe(
-                dados_eq.drop('label').to_frame('Valor'),
-                use_container_width=True
-            )
+        col5, col6, col7 = st.columns(3)
+        col5.metric("KM/Hr Último Registro", km_hs_display)
+        col6.metric(
+            f"Total Última Safra ({safra_ult})",
+            formatar_brasileiro(total_ult_safra) if safra_ult else "–"
+        )
+        col7.metric(
+            "Média Última Safra",
+            formatar_brasileiro(media_ult_safra) if safra_ult else "–"
+        )
+
+        st.markdown("---")
+        st.subheader("Informações Cadastrais")
+        st.dataframe(
+            dados_eq.drop('label').to_frame('Valor'),
+            use_container_width=True
+        )
 
 
     # --- ABA 3: Tabela Detalhada ---
