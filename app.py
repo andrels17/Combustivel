@@ -162,49 +162,146 @@ def main():
     ])
 
     # --- ABA 1: Análise de Consumo ---
-    with tab_principal:
-        opts = sidebar_filters(df)
-        df_f = filtrar_dados(df, opts)
-        
-        if df_f.empty:
-            st.error("Sem dados para os filtros selecionados.")
-            st.stop()
+    # --- ABA 1: Análise de Consumo ---
+with tab_principal:
+    opts = sidebar_filters(df)
+    df_f = filtrar_dados(df, opts)
+    
+    if df_f.empty:
+        st.error("Sem dados para os filtros selecionados.")
+        st.stop()
 
-        kpis_consumo = calcular_kpis_consumo(df_f)
-        
-        # --- Novos KPIs de Frota ---
-        total_veiculos = len(df_frotas_completo)
-        veiculos_ativos = df_frotas_completo[df_frotas_completo['ATIVO'] == 'ATIVO'].shape[0]
-        idade_media = datetime.now().year - df_frotas_completo['ANOMODELO'].median()
+    kpis_consumo = calcular_kpis_consumo(df_f)
+    
+    # Novos KPIs de Frota
+    total_veiculos = len(df_frotas_completo)
+    veiculos_ativos = df_frotas_completo[df_frotas_completo['ATIVO'] == 'ATIVO'].shape[0]
+    idade_media = datetime.now().year - df_frotas_completo['ANOMODELO'].median()
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Litros Consumidos", formatar_brasileiro(kpis_consumo["total_litros"]))
-        c2.metric("Média de Consumo", formatar_brasileiro(kpis_consumo["media_consumo"]))
-        c3.metric("Veículos Ativos", f"{veiculos_ativos} / {total_veiculos}")
-        c4.metric("Idade Média da Frota", f"{idade_media:.0f} anos")
-        
-        # ... (O resto dos gráficos da tab1 permanecem aqui) ...
-        media_op = df_f.groupby("Classe Operacional")["Media"].mean().reset_index()
-        media_op["Media"] = media_op["Media"].round(1)
-        fig1 = px.bar(
-            media_op, x="Classe Operacional", y="Media", text="Media",
-            title="Média de Consumo por Classe Operacional",
-            labels={"Media": "Média (km/l)", "Classe Operacional": "Classe"}
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Litros Consumidos", formatar_brasileiro(kpis_consumo["total_litros"]))
+    c2.metric("Média de Consumo", formatar_brasileiro(kpis_consumo["media_consumo"]))
+    c3.metric("Veículos Ativos", f"{veiculos_ativos} / {total_veiculos}")
+    c4.metric("Idade Média da Frota", f"{idade_media:.0f} anos")
+    
+    # Gráfico 1: Média de Consumo por Classe Operacional
+    media_op = df_f.groupby("Classe Operacional")["Media"].mean().reset_index()
+    media_op["Media"] = media_op["Media"].round(1)
+    fig1 = px.bar(
+        media_op, x="Classe Operacional", y="Media", text="Media",
+        title="Média de Consumo por Classe Operacional",
+        labels={"Media": "Média (km/l)", "Classe Operacional": "Classe"}
+    )
+    fig1.update_traces(textposition="outside")
+    st.plotly_chart(fig1, use_container_width=True)
+
+
+    # Gráfico 2: Consumo Mensal
+    agg = df_f.groupby("AnoMes")["Qtde_Litros"].mean().reset_index()
+    agg["Mes"] = pd.to_datetime(agg["AnoMes"] + "-01").dt.strftime("%b %Y")
+    agg["Qtde_Litros"] = agg["Qtde_Litros"].round(1)
+
+    fig2 = px.bar(
+        agg,
+        x="Mes",
+        y="Qtde_Litros",
+        text="Qtde_Litros",
+        title="Consumo Mensal",
+        labels={"Qtde_Litros": "Litros", "Mes": "Mês"}
+    )
+    fig2.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+    fig2.update_layout(xaxis_tickangle=-45, height=450)
+    st.plotly_chart(fig2, use_container_width=True)
+
+
+    # Gráfico 3: Top 10 Equipamentos por Consumo Médio
+    top10 = df_f.groupby("Cod_Equip")["Qtde_Litros"].sum().nlargest(10).index
+    trend = (
+        df_f[df_f["Cod_Equip"].isin(top10)]
+        .groupby(["Cod_Equip", "Descricao_Equip"])["Media"].mean()
+        .reset_index()
+        .sort_values("Media", ascending=False)
+    )
+    trend["Equip_Label"] = trend.apply(
+        lambda r: f"{r['Cod_Equip']} - {r['Descricao_Equip']}", axis=1
+    )
+    trend["Media"] = trend["Media"].round(1)
+
+    fig3 = px.bar(
+        trend, x="Equip_Label", y="Media", text="Media",
+        title="Média de Consumo por Equipamento (Top 10)",
+        labels={"Equip_Label": "Equipamento", "Media": "Média (km/l)"}
+    )
+    fig3.update_traces(
+        textposition="outside",
+        marker=dict(line=dict(color="black", width=0.5))
+    )
+    fig3.update_layout(xaxis_tickangle=-45, margin=dict(l=20, r=20, t=50, b=80))
+    st.plotly_chart(fig3, use_container_width=True)
+
+    # Botão de download do Top10 como PNG
+    @st.cache_data(show_spinner=False)
+    def get_fig3_png(fig):
+        return fig.to_image(format="png")
+
+    img_bytes = get_fig3_png(fig3)
+    st.download_button(
+        "📷 Exportar Top10 (PNG)",
+        data=img_bytes, file_name="top10.png", mime="image/png",
+        key="download_top10"
+    )
+
+
+    # Gráfico 4: Comparativo de Consumo Acumulado por Safra
+    st.header("📈 Comparativo de Consumo Acumulado por Safra")
+    safras_disp = sorted(df["Safra"].dropna().unique())
+    sel_safras = st.multiselect(
+        "Selecione safras", safras_disp,
+        default=safras_disp[-2:] if len(safras_disp) > 1 else safras_disp
+    )
+
+    if sel_safras:
+        df_cmp = df[df["Safra"].isin(sel_safras)].copy()
+        iniciais = df_cmp.groupby("Safra")["Data"].min().to_dict()
+        df_cmp["Dias_Uteis"] = (
+            df_cmp["Data"] - df_cmp["Safra"].map(iniciais)
+        ).dt.days + 1
+
+        df_cmp = (
+            df_cmp
+            .groupby(["Safra", "Dias_Uteis"])["Qtde_Litros"].sum()
+            .groupby(level=0).cumsum()
+            .reset_index()
         )
-        st.plotly_chart(fig1, use_container_width=True)
 
-     # 2) Gráfico barras: consumo mensal
-        agg = df_f.groupby("AnoMes")["Qtde_Litros"].mean().reset_index()
-        agg["Mes"] = pd.to_datetime(agg["AnoMes"] + "-01").dt.strftime("%b %Y")
-        agg["Qtde_Litros"] = agg["Qtde_Litros"].round(1)
-        fig2 = px.bar(
-            agg,
-            x="Mes",
+        fig_acum = px.line(
+            df_cmp,
+            x="Dias_Uteis",
             y="Qtde_Litros",
-            text="Qtde_Litros",
-            title="Consumo Mensal",
-            labels={"Qtde_Litros": "Litros", "Mes": "Mês"}
+            color="Safra",
+            markers=True,
+            labels={
+                "Dias_Uteis": "Dias desde início da safra",
+                "Qtde_Litros": "Consumo acumulado (L)"
+            },
+            title="Consumo Acumulado por Safra"
         )
+
+        # Destaque do ponto atual na última safra selecionada
+        ultima = sel_safras[-1]
+        df_u = df_cmp[df_cmp["Safra"] == ultima]
+        if not df_u.empty:
+            fig_acum.add_scatter(
+                x=[df_u["Dias_Uteis"].max()],
+                y=[df_u["Qtde_Litros"].max()],
+                mode="markers+text",
+                text=[f"Hoje: {formatar_brasileiro(df_u['Qtde_Litros'].max())} L"],
+                textposition="top right",
+                marker=dict(size=8, color="black"),
+                showlegend=False
+            )
+
+        st.plotly_chart(fig_acum, use_container_width=True)
 
     # --- ABA 2: Consulta de Frota (NOVO) ---
     with tab_consulta:
